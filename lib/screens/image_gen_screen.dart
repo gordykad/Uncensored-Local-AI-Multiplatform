@@ -9,6 +9,7 @@
 // disintegrating send).
 import 'dart:async';
 import 'dart:io';
+import 'dart:typed_data';
 import 'dart:math' as math;
 import 'dart:ui' as ui;
 
@@ -379,7 +380,7 @@ class _ImageGenScreenState extends State<ImageGenScreen>
           Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
             ClipRRect(
               borderRadius: BorderRadius.circular(14),
-              child: Image.memory(item.bytes!, fit: BoxFit.cover),
+              child: Image.memory(Uint8List.fromList(item.bytes!), fit: BoxFit.cover),
             ),
             const SizedBox(height: 6),
             Row(children: [
