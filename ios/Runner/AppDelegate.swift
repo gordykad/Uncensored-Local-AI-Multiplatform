@@ -239,21 +239,79 @@ final class MiniXDownloads: NSObject, URLSessionDownloadDelegate, UNUserNotifica
                                            name: UIApplication.didEnterBackgroundNotification, object: nil)
     NotificationCenter.default.addObserver(self, selector: #selector(appWillEnterForeground),
                                            name: UIApplication.willEnterForegroundNotification, object: nil)
-    // Reattach to transfers the daemon kept running while we were gone.
-    reattach(session, background: true)
-    reattach(fgSession, background: false)
+    // Reattach to transfers the daemon kept running while we were gone,
+    // then reconcile: any transfer the store calls "downloading" with no
+    // live task on either session is stranded (process death mid-swap or
+    // while holding the foreground task) and gets revived, never left
+    // sitting as a frozen zombie.
+    let group = DispatchGroup()
+    group.enter()
+    reattach(session, background: true) { group.leave() }
+    group.enter()
+    reattach(fgSession, background: false) { group.leave() }
+    group.notify(queue: .main) { [weak self] in self?.reconcile() }
   }
 
-  private func reattach(_ s: URLSession, background: Bool) {
+  private func reattach(_ s: URLSession, background: Bool, done: @escaping () -> Void) {
     s.getAllTasks { [weak self] all in
-      guard let self = self else { return }
+      guard let self = self else { done(); return }
       let meta = self.allMeta()
       for task in all {
-        if let filename = meta.first(where: { $0.value["taskId"] as? Int == task.taskIdentifier })?.key {
-          self.tasks[filename] = task as? URLSessionDownloadTask
+        if let filename = meta.first(where: { $0.value["taskId"] as? Int == task.taskIdentifier })?.key,
+           let dl = task as? URLSessionDownloadTask {
+          self.tasks[filename] = dl
           self.taskOwner[filename] = background
+          // Refresh the store with the task's LIVE byte counts so the
+          // UI never shows a stale snapshot for a live transfer.
+          if self.allStatus()[filename]?["status"] as? String == "downloading" {
+            self.setStatus(filename, [
+              "status": "downloading",
+              "received": Int(dl.countOfBytesReceived),
+              "total": Int(dl.countOfBytesExpectedToReceive),
+            ])
+          }
         }
       }
+      done()
+    }
+  }
+
+  /// Revive transfers the store believes are downloading but no live
+  /// task backs (1.8.1). Resume data first, the stored URL as fallback;
+  /// the session follows a persisted swap intent when one exists, else
+  /// the current app state. A transfer with neither becomes an honest
+  /// failure on screen instead of a frozen zombie.
+  private func reconcile() {
+    let statuses = allStatus()
+    for (filename, meta) in allMeta() {
+      guard statuses[filename]?["status"] as? String == "downloading",
+            tasks[filename] == nil else { continue }
+      let toBackground: Bool
+      if let intent = meta["swapTo"] as? String {
+        toBackground = intent == "bg"
+      } else {
+        toBackground = UIApplication.shared.applicationState != .active
+      }
+      let target: URLSession = toBackground ? session : fgSession
+      let task: URLSessionDownloadTask
+      if let resumeData = defaults.data(forKey: "minix.dl.resume.\(filename)") {
+        task = target.downloadTask(withResumeData: resumeData)
+        defaults.removeObject(forKey: "minix.dl.resume.\(filename)")
+      } else if let urlString = meta["url"] as? String, let url = URL(string: urlString) {
+        task = target.downloadTask(with: url)
+      } else {
+        setStatus(filename, ["status": "failed", "received": 0, "total": 0,
+                             "error": "Download was interrupted and cannot resume."])
+        continue
+      }
+      tasks[filename] = task
+      taskOwner[filename] = toBackground
+      var m = meta
+      m["taskId"] = task.taskIdentifier
+      m["owner"] = toBackground ? "bg" : "fg"
+      m.removeValue(forKey: "swapTo")
+      setMeta(filename, m)
+      task.resume()
     }
   }
 
@@ -348,6 +406,13 @@ final class MiniXDownloads: NSObject, URLSessionDownloadDelegate, UNUserNotifica
           taskOwner[filename] != toBackground,
           !swapping.contains(filename) else { return }
     swapping.insert(filename)
+    // Persist the swap intent BEFORE canceling: if the process is
+    // suspended or killed mid-handoff, reconcile() at the next launch
+    // revives the transfer into the intended session.
+    if var m = allMeta()[filename] {
+      m["swapTo"] = toBackground ? "bg" : "fg"
+      setMeta(filename, m)
+    }
     task.cancel(byProducingResumeData: { [weak self] data in
       guard let self = self else { return }
       let target: URLSession = toBackground ? self.session : self.fgSession
@@ -366,6 +431,7 @@ final class MiniXDownloads: NSObject, URLSessionDownloadDelegate, UNUserNotifica
       if var m = meta {
         m["taskId"] = newTask.taskIdentifier
         m["owner"] = toBackground ? "bg" : "fg"
+        m.removeValue(forKey: "swapTo")
         self.setMeta(filename, m)
       }
       newTask.resume()
