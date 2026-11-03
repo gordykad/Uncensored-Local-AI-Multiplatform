@@ -129,15 +129,61 @@ class ChatController extends GetxController {
     chat.messages.add(aiMsg);
     chats.refresh();
 
-    try {
-      final stream = _llm.generate(
-        messages: history,
-        systemPrompt: chat.systemPrompt.isNotEmpty
-            ? chat.systemPrompt
-            : systemPrompt.value,
-        temperature: temperature.value,
-      );
+    final stream = _llm.generate(
+      messages: history,
+      systemPrompt: chat.systemPrompt.isNotEmpty
+          ? chat.systemPrompt
+          : systemPrompt.value,
+      temperature: temperature.value,
+    );
+    await _consumeStream(chat, aiMsg, stream);
+  }
 
+  /// Ticket 26: a remote (API) generation materializes in the chat.
+  /// The final user message lands as a user bubble and the reply
+  /// streams live into an assistant bubble through the same rendering
+  /// and persistence as a local generation. The caller's HTTP response
+  /// is unaffected; the engine's busy rules already govern both doors.
+  Future<void> runRemoteTurn({
+    required String userText,
+    required Stream<String> tokenStream,
+    String? modelFilename,
+  }) async {
+    if (isGenerating.value) return;
+    if (activeChat == null) newChat();
+    final chat = activeChat;
+    if (chat == null) return;
+
+    final userMsg = MessageModel(role: MessageRole.user, content: userText);
+    chat.messages.add(userMsg);
+    chat.autoTitle();
+    chat.updatedAt = DateTime.now();
+    if (chat.modelId.isEmpty && modelFilename != null) {
+      chat.modelId = modelFilename;
+    }
+    _storage.saveChat(chat);
+    chats.refresh();
+
+    isGenerating.value = true;
+    isRegenerating.value = false;
+    streamedResponse.value = '';
+
+    final aiMsg = MessageModel(role: MessageRole.assistant, content: '');
+    chat.messages.add(aiMsg);
+    chats.refresh();
+
+    await _consumeStream(chat, aiMsg, tokenStream);
+  }
+
+  /// Shared stream consumption for local and remote generations:
+  /// appends tokens to [aiMsg], then applies the standard cleanup,
+  /// flag reset, and persistence in the finally block.
+  Future<void> _consumeStream(
+    ChatModel chat,
+    MessageModel aiMsg,
+    Stream<String> stream,
+  ) async {
+    try {
       await for (final token in stream) {
         streamedResponse.value += token;
         aiMsg.content = streamedResponse.value;

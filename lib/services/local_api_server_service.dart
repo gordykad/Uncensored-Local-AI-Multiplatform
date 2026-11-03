@@ -6,6 +6,7 @@ import 'dart:math';
 import 'package:get/get.dart';
 import 'package:llamadart/llamadart.dart';
 
+import '../controllers/chat_controller.dart';
 import '../controllers/model_controller.dart';
 import 'admin_activity_service.dart';
 import 'chat_storage_service.dart';
@@ -267,30 +268,77 @@ class LocalApiServerService extends GetxService {
     _noteAdmin(request, 'Astro ran a generation');
     final body = await _readJsonObject(request);
     final chatRequest = _parseChatCompletionRequest(body);
+    // Ticket 26: remote (non-loopback) generations also materialize
+    // in the chat UI. Loopback (the phone's own test buttons) stays
+    // private to the API, same as ticket 24's narration rule.
+    final materialize =
+        !(request.connectionInfo?.remoteAddress.isLoopback ?? false);
 
     if (chatRequest.stream) {
-      await _streamChatCompletion(request.response, chatRequest);
+      await _streamChatCompletion(
+        request.response,
+        chatRequest,
+        materialize: materialize,
+      );
       return;
     }
 
     await _writeJson(
       request.response,
-      await _createChatCompletion(chatRequest),
+      await _createChatCompletion(chatRequest, materialize: materialize),
     );
   }
 
-  Future<Map<String, dynamic>> _createChatCompletion(
+  /// Ticket 26 bridge: feed a copy of the token stream into the chat
+  /// so the run appears there live and persists in history.
+  void _materializeInChat(
     _ChatCompletionRequest request,
-  ) async {
+    Stream<String> tokens,
+  ) {
+    try {
+      final userText = request.messages
+          .lastWhere(
+            (m) => m.role == LlamaChatRole.user,
+            orElse: () => request.messages.last,
+          )
+          .content;
+      unawaited(
+        Get.find<ChatController>()
+            .runRemoteTurn(
+              userText: userText,
+              tokenStream: tokens,
+              modelFilename:
+                  Get.find<ModelController>().selectedModelFilename.value,
+            )
+            .catchError((_) {}),
+      );
+    } catch (_) {}
+  }
+
+  Future<Map<String, dynamic>> _createChatCompletion(
+    _ChatCompletionRequest request, {
+    required bool materialize,
+  }) async {
     final created = _unixSeconds();
     final id = _completionId();
     final buffer = StringBuffer();
 
-    await for (final token in _llm.generateChatCompletion(
-      messages: request.messages,
-      params: request.params,
-    )) {
-      buffer.write(token);
+    StreamController<String>? chatSink;
+    if (materialize) {
+      chatSink = StreamController<String>();
+      _materializeInChat(request, chatSink.stream);
+    }
+
+    try {
+      await for (final token in _llm.generateChatCompletion(
+        messages: request.messages,
+        params: request.params,
+      )) {
+        buffer.write(token);
+        chatSink?.add(token);
+      }
+    } finally {
+      await chatSink?.close();
     }
 
     final content = buffer.toString().trim();
@@ -314,10 +362,17 @@ class LocalApiServerService extends GetxService {
 
   Future<void> _streamChatCompletion(
     HttpResponse response,
-    _ChatCompletionRequest request,
-  ) async {
+    _ChatCompletionRequest request, {
+    required bool materialize,
+  }) async {
     final created = _unixSeconds();
     final id = _completionId();
+
+    StreamController<String>? chatSink;
+    if (materialize) {
+      chatSink = StreamController<String>();
+      _materializeInChat(request, chatSink.stream);
+    }
 
     response.statusCode = HttpStatus.ok;
     response.headers
@@ -339,6 +394,7 @@ class LocalApiServerService extends GetxService {
         params: request.params,
       )) {
         if (token.isEmpty) continue;
+        chatSink?.add(token);
         writeEvent(
           _streamChunk(id: id, created: created, delta: {'content': token}),
         );
@@ -364,6 +420,7 @@ class LocalApiServerService extends GetxService {
       });
       response.write('data: [DONE]\n\n');
     } finally {
+      await chatSink?.close();
       await response.close();
     }
   }
@@ -591,7 +648,7 @@ class LocalApiServerService extends GetxService {
   // token, on loopback too. The token is generated on first use and
   // shown in the API screen; regenerating invalidates the old one.
 
-  static const appVersion = '1.7.0';
+  static const appVersion = '1.8.0';
 
   String get adminToken {
     var token = _storage.adminToken;

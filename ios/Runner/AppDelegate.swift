@@ -181,6 +181,15 @@ final class MiniXSampler {
   }
 
   static func diskFreeBytes() -> Int {
+    // volumeAvailableCapacityForImportantUsage is the figure Settings
+    // shows (it counts purgeable space iOS can reclaim for the user).
+    // The raw systemFreeSize under-reported by ~35 GB on the founder's
+    // phone and poisoned the ticket 05 fit check (fixed in 1.8.0).
+    let home = URL(fileURLWithPath: NSHomeDirectory())
+    if let values = try? home.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey]),
+       let capacity = values.volumeAvailableCapacityForImportantUsage {
+      return Int(capacity)
+    }
     let attrs = try? FileManager.default.attributesOfFileSystem(forPath: NSHomeDirectory())
     if let free = attrs?[.systemFreeSize] as? NSNumber {
       return free.intValue
@@ -189,19 +198,27 @@ final class MiniXSampler {
   }
 }
 
-// ── Background downloads (ticket 05) ───────────────────────────
-// A background URLSession: the system daemon performs the transfer
-// while MiniX is suspended or not running at all, and relaunches the
-// app to deliver events. State lives in UserDefaults so it survives
+// ── Downloads (tickets 05 + 27: the hybrid engine) ────────────
+// Two URLSessions own one transfer at a time. While MiniX is in the
+// foreground the transfer runs on a plain foreground session at full
+// speed; when the app leaves, the task is cancelled WITH resume data
+// and immediately re-created inside the background session, which the
+// system daemon keeps running while MiniX is suspended or not running
+// at all (and relaunches the app to deliver events). Returning to the
+// foreground swaps it back. State lives in UserDefaults so it survives
 // relaunches; the finished file is moved into the models directory
 // synchronously in the delegate callback (the temp file is deleted
-// when that callback returns), and the completion notification is
-// posted natively — it never depends on the Dart side being alive.
+// when that callback returns), and the started/completion/failure
+// notifications are posted natively — they never depend on the Dart
+// side being alive.
 final class MiniXDownloads: NSObject, URLSessionDownloadDelegate, UNUserNotificationCenterDelegate {
   static let shared = MiniXDownloads()
 
   private var session: URLSession!
+  private var fgSession: URLSession!
   private var tasks: [String: URLSessionDownloadTask] = [:]
+  private var taskOwner: [String: Bool] = [:] // filename -> owned by background session
+  private var swapping: Set<String> = []
   private var lastWrite: [String: Date] = [:]
   var bgCompletionHandler: (() -> Void)?
 
@@ -215,14 +232,26 @@ final class MiniXDownloads: NSObject, URLSessionDownloadDelegate, UNUserNotifica
     config.sessionSendsLaunchEvents = true
     config.isDiscretionary = false
     session = URLSession(configuration: config, delegate: self, delegateQueue: OperationQueue())
+    fgSession = URLSession(configuration: .default, delegate: self, delegateQueue: OperationQueue())
     UNUserNotificationCenter.current().delegate = self
+    // Hybrid swaps ride the app lifecycle.
+    NotificationCenter.default.addObserver(self, selector: #selector(appDidEnterBackground),
+                                           name: UIApplication.didEnterBackgroundNotification, object: nil)
+    NotificationCenter.default.addObserver(self, selector: #selector(appWillEnterForeground),
+                                           name: UIApplication.willEnterForegroundNotification, object: nil)
     // Reattach to transfers the daemon kept running while we were gone.
-    session.getAllTasks { [weak self] all in
+    reattach(session, background: true)
+    reattach(fgSession, background: false)
+  }
+
+  private func reattach(_ s: URLSession, background: Bool) {
+    s.getAllTasks { [weak self] all in
       guard let self = self else { return }
       let meta = self.allMeta()
       for task in all {
         if let filename = meta.first(where: { $0.value["taskId"] as? Int == task.taskIdentifier })?.key {
           self.tasks[filename] = task as? URLSessionDownloadTask
+          self.taskOwner[filename] = background
         }
       }
     }
@@ -253,26 +282,35 @@ final class MiniXDownloads: NSObject, URLSessionDownloadDelegate, UNUserNotifica
       setStatus(filename, ["status": "failed", "received": 0, "total": 0, "error": "Bad URL"])
       return
     }
+    // Hybrid: foreground session while the app is active (full speed),
+    // background session otherwise (survival).
+    let toBackground = UIApplication.shared.applicationState != .active
+    let owner: URLSession = toBackground ? session : fgSession
     let task: URLSessionDownloadTask
     if let resumeData = defaults.data(forKey: "minix.dl.resume.\(filename)") {
-      task = session.downloadTask(withResumeData: resumeData)
+      task = owner.downloadTask(withResumeData: resumeData)
       defaults.removeObject(forKey: "minix.dl.resume.\(filename)")
     } else {
-      task = session.downloadTask(with: url)
+      task = owner.downloadTask(with: url)
     }
     tasks[filename] = task
-    setMeta(filename, ["destDir": destDir, "name": displayName, "taskId": task.taskIdentifier])
+    taskOwner[filename] = toBackground
+    setMeta(filename, ["destDir": destDir, "name": displayName, "taskId": task.taskIdentifier,
+                       "url": urlString, "owner": toBackground ? "bg" : "fg"])
     // Belt for the relaunch path: if task identifiers ever fail to
     // match after a system relaunch, the finish delegate can still
     // place the file from the request URL + this last destination.
     defaults.set(destDir, forKey: "minix.dl.lastDestDir")
     setStatus(filename, ["status": "downloading", "received": 0, "total": 0])
     task.resume()
+    postStartedNotification(name: displayName)
   }
 
   func cancel(filename: String) {
     tasks[filename]?.cancel()
     tasks.removeValue(forKey: filename)
+    taskOwner.removeValue(forKey: filename)
+    swapping.remove(filename)
     setStatus(filename, nil)
     setMeta(filename, nil)
     defaults.removeObject(forKey: "minix.dl.resume.\(filename)")
@@ -291,11 +329,67 @@ final class MiniXDownloads: NSObject, URLSessionDownloadDelegate, UNUserNotifica
     setMeta(filename, nil)
   }
 
+  // ── Hybrid swaps (ticket 27) ─────────────────────────────────
+  @objc private func appDidEnterBackground() { swapAll(toBackground: true) }
+  @objc private func appWillEnterForeground() { swapAll(toBackground: false) }
+
+  private func swapAll(toBackground: Bool) {
+    for filename in Array(tasks.keys) {
+      swap(filename, toBackground: toBackground)
+    }
+  }
+
+  /// Cancel the owning task WITH resume data and re-create the
+  /// transfer in the other session from where it left off. If the
+  /// session produces no resume data, fall back to a fresh task from
+  /// the stored URL rather than losing the download outright.
+  private func swap(_ filename: String, toBackground: Bool) {
+    guard let task = tasks[filename],
+          taskOwner[filename] != toBackground,
+          !swapping.contains(filename) else { return }
+    swapping.insert(filename)
+    task.cancel(byProducingResumeData: { [weak self] data in
+      guard let self = self else { return }
+      let target: URLSession = toBackground ? self.session : self.fgSession
+      let meta = self.allMeta()[filename]
+      let newTask: URLSessionDownloadTask
+      if let data = data {
+        newTask = target.downloadTask(withResumeData: data)
+      } else if let urlString = meta?["url"] as? String, let url = URL(string: urlString) {
+        newTask = target.downloadTask(with: url)
+      } else {
+        self.swapping.remove(filename)
+        return
+      }
+      self.tasks[filename] = newTask
+      self.taskOwner[filename] = toBackground
+      if var m = meta {
+        m["taskId"] = newTask.taskIdentifier
+        m["owner"] = toBackground ? "bg" : "fg"
+        self.setMeta(filename, m)
+      }
+      newTask.resume()
+      self.swapping.remove(filename)
+    })
+  }
+
+  /// True when this callback belongs to a task a hybrid swap has
+  /// already replaced — its events must not touch the stores. A task
+  /// the stores do not know at all is NOT stale: the relaunch
+  /// fallback in the finish delegate decides for those.
+  private func isStale(_ task: URLSessionTask) -> Bool {
+    guard let filename = filename(for: task) else { return false }
+    if swapping.contains(filename) { return true }
+    if let current = tasks[filename] { return current !== task }
+    return false
+  }
+
   // ── URLSessionDownloadDelegate ───────────────────────────────
   func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask,
                   didWriteData bytesWritten: Int64, totalBytesWritten: Int64,
                   totalBytesExpectedToWrite: Int64) {
     guard let filename = filename(for: downloadTask) else { return }
+    if isStale(downloadTask) { return }
     let now = Date()
     if let last = lastWrite[filename], now.timeIntervalSince(last) < 0.5 { return }
     lastWrite[filename] = now
@@ -308,6 +402,7 @@ final class MiniXDownloads: NSObject, URLSessionDownloadDelegate, UNUserNotifica
 
   func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask,
                   didFinishDownloadingTo location: URL) {
+    if isStale(downloadTask) { return }
     let meta = filename(for: downloadTask).flatMap { allMeta()[$0] }
     let fname: String
     let destDir: String
@@ -338,8 +433,10 @@ final class MiniXDownloads: NSObject, URLSessionDownloadDelegate, UNUserNotifica
       failure = error.localizedDescription
     }
     tasks.removeValue(forKey: fname)
+    taskOwner.removeValue(forKey: fname)
     if let failure = failure {
       setStatus(fname, ["status": "failed", "received": 0, "total": 0, "error": failure])
+      postFailureNotification(name: name, error: failure)
     } else {
       let size = (try? FileManager.default.attributesOfItem(atPath: dest.path)[.size] as? NSNumber)?.intValue ?? 0
       setStatus(fname, ["status": "completed", "received": size, "total": size])
@@ -351,7 +448,9 @@ final class MiniXDownloads: NSObject, URLSessionDownloadDelegate, UNUserNotifica
                   didCompleteWithError error: Error?) {
     guard let error = error,
           let filename = filename(for: task) else { return }
+    if isStale(task) { return }
     tasks.removeValue(forKey: filename)
+    taskOwner.removeValue(forKey: filename)
     let nsError = error as NSError
     if let resumeData = nsError.userInfo[NSURLSessionDownloadTaskResumeData] as? Data {
       defaults.set(resumeData, forKey: "minix.dl.resume.\(filename)")
@@ -360,6 +459,8 @@ final class MiniXDownloads: NSObject, URLSessionDownloadDelegate, UNUserNotifica
     current["status"] = "failed"
     current["error"] = nsError.localizedDescription
     setStatus(filename, current)
+    let name = allMeta()[filename]?["name"] as? String ?? filename
+    postFailureNotification(name: name, error: nsError.localizedDescription)
   }
 
   func urlSessionDidFinishEvents(forBackgroundURLSession session: URLSession) {
@@ -373,7 +474,35 @@ final class MiniXDownloads: NSObject, URLSessionDownloadDelegate, UNUserNotifica
     return allMeta().first(where: { $0.value["taskId"] as? Int == task.taskIdentifier })?.key
   }
 
-  // ── Completion notification ──────────────────────────────────
+  // ── Download notifications (05 completion; 27 started/failed) ──
+  private func postStartedNotification(name: String) {
+    let content = UNMutableNotificationContent()
+    content.title = "Download started"
+    content.body = "\(name) is downloading - you can leave the app."
+    content.sound = .default
+    content.threadIdentifier = "downloads"
+    let request = UNNotificationRequest(
+      identifier: "dl-start-\(name)-\(Date().timeIntervalSince1970)",
+      content: content,
+      trigger: nil
+    )
+    UNUserNotificationCenter.current().add(request, withCompletionHandler: nil)
+  }
+
+  private func postFailureNotification(name: String, error: String) {
+    let content = UNMutableNotificationContent()
+    content.title = "Download failed"
+    content.body = "\(name): \(error)"
+    content.sound = .default
+    content.threadIdentifier = "downloads"
+    let request = UNNotificationRequest(
+      identifier: "dl-fail-\(name)-\(Date().timeIntervalSince1970)",
+      content: content,
+      trigger: nil
+    )
+    UNUserNotificationCenter.current().add(request, withCompletionHandler: nil)
+  }
+
   private func postCompletionNotification(name: String) {
     let content = UNMutableNotificationContent()
     content.title = "Model ready"
