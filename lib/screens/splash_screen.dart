@@ -3,6 +3,7 @@ import 'package:get/get.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 
 import '../theme/app_colors.dart';
+import '../widgets/minix_text_fx.dart';
 import '../services/llm_service.dart';
 import '../services/model_manager.dart';
 import '../services/chat_storage_service.dart';
@@ -94,31 +95,35 @@ class _SplashScreenState extends State<SplashScreen> {
                       ),
                     ],
                   ),
-                  child: const Icon(
-                    Icons.bolt_rounded,
-                    size: 42,
-                    color: Colors.white,
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(20),
+                    child: Image.asset(
+                      'assets/icon/minix-icon.png',
+                      fit: BoxFit.cover,
+                    ),
                   ),
                 )
                 .animate()
                 .fadeIn(duration: 600.ms)
                 .scale(begin: const Offset(0.8, 0.8)),
             const SizedBox(height: 24),
-            Text(
-              'Uncensored Local AI',
+            SignalReveal(
+              text: 'ASTRO MINIX',
               style: TextStyle(
-                fontSize: 28,
+                fontSize: 27,
                 fontWeight: FontWeight.w700,
                 color: context.text,
-                letterSpacing: -0.5,
+                letterSpacing: 1.5,
               ),
-            ).animate().fadeIn(delay: 200.ms, duration: 600.ms),
+            ),
             const SizedBox(height: 8),
             Text(
-              'Run uncensored LLMs natively on any device 🔓',
+              'Nothing leaves this phone.',
               style: TextStyle(fontSize: 13, color: context.textM),
             ).animate().fadeIn(delay: 400.ms, duration: 600.ms),
-            const SizedBox(height: 40),
+            const SizedBox(height: 26),
+            const RedactionBars(widths: [120, 84, 142], barHeight: 9),
+            const SizedBox(height: 34),
             const SizedBox(
               width: 24,
               height: 24,
@@ -128,8 +133,8 @@ class _SplashScreenState extends State<SplashScreen> {
               ),
             ).animate().fadeIn(delay: 600.ms),
             const SizedBox(height: 16),
-            Text(
-              _status,
+            ScrambleText(
+              text: _status,
               style: TextStyle(fontSize: 12, color: context.textD),
             ).animate().fadeIn(delay: 600.ms),
           ],

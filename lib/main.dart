@@ -66,7 +66,7 @@ class PortableAIApp extends StatelessWidget {
     return GetMaterialApp(
       title: 'Uncensored Local AI',
       debugShowCheckedModeBanner: false,
-      themeMode: themeController.themeMode,
+      themeMode: ThemeMode.dark, // ticket 08: dark-only — a light theme cannot be a black box
       theme: AppTheme.lightTheme,
       darkTheme: AppTheme.darkTheme,
       initialBinding: AppBindings(),

@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:http/http.dart' as http;
 import '../theme/app_colors.dart';
+import '../widgets/minix_canvas_fx.dart';
 import '../services/local_api_server_service.dart';
 
 class ApiEndpointsScreen extends StatefulWidget {
@@ -125,6 +126,8 @@ class _ApiEndpointsScreenState extends State<ApiEndpointsScreen> {
             const SizedBox(height: 24),
 
             // Endpoints
+            const SonarGrid(height: 170),
+            const SizedBox(height: 16),
             _buildEndpointCard(
               context: context,
               method: 'GET',

@@ -8,7 +8,9 @@ import '../controllers/theme_controller.dart';
 import '../services/llm_service.dart';
 import '../widgets/chat_sidebar.dart';
 import '../widgets/chat_bubble.dart';
-import '../widgets/typing_indicator.dart';
+import '../widgets/minix_canvas_fx.dart';
+import '../widgets/minix_controls.dart';
+import '../widgets/minix_text_fx.dart';
 import 'model_library_screen.dart';
 import 'settings_screen.dart';
 
@@ -27,6 +29,7 @@ class _HomeScreenState extends State<HomeScreen> {
   final _msgController = TextEditingController();
   final _scrollController = ScrollController();
   bool _sidebarOpen = true;
+  String? _dissolvingText; // ticket 08: Nexus send disintegration
   bool _autoScrollToBottom = true;
   String? _lastRenderedChatId;
 
@@ -86,6 +89,7 @@ class _HomeScreenState extends State<HomeScreen> {
     }
 
     _msgController.clear();
+    setState(() => _dissolvingText = text);
     _autoScrollToBottom = true;
     _chatCtrl.sendMessage(
       text,
@@ -525,8 +529,9 @@ class _HomeScreenState extends State<HomeScreen> {
                         ),
                       ),
                       Flexible(
-                        child: Text(
-                          label,
+                        child: VelocityText(
+                          text: label,
+                          scrollController: _scrollController,
                           style: TextStyle(
                             fontSize: 14,
                             fontWeight: loaded
@@ -534,8 +539,6 @@ class _HomeScreenState extends State<HomeScreen> {
                                 : FontWeight.w500,
                             color: loaded ? context.text : context.textD,
                           ),
-                          overflow: TextOverflow.ellipsis,
-                          maxLines: 1,
                         ),
                       ),
                       const SizedBox(width: 4),
@@ -693,11 +696,52 @@ class _HomeScreenState extends State<HomeScreen> {
                   subtitle: info != null
                       ? Text(
                           '${info.sizeGb} GB • Min ${info.minRamGb} GB RAM',
-                          style: TextStyle(fontSize: 11, color: context.textD),
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: context.textD,
+                            fontFamily: 'monospace',
+                          ),
                         )
                       : null,
-                  trailing: isActive
-                      ? const Text(
+                  trailing: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      if (info != null) ...[
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 6,
+                            vertical: 2,
+                          ),
+                          decoration: BoxDecoration(
+                            color: (info.minRamGb > 6
+                                    ? AppColors.red
+                                    : info.sizeGb > 4
+                                        ? AppColors.orange
+                                        : AppColors.accentHi)
+                                .withValues(alpha: 0.15),
+                            borderRadius: BorderRadius.circular(5),
+                          ),
+                          child: Text(
+                            info.minRamGb > 6
+                                ? 'TOO BIG'
+                                : info.sizeGb > 4
+                                    ? 'STREAMS'
+                                    : 'FITS',
+                            style: TextStyle(
+                              fontSize: 9.5,
+                              fontWeight: FontWeight.w700,
+                              color: info.minRamGb > 6
+                                  ? AppColors.red
+                                  : info.sizeGb > 4
+                                      ? AppColors.orange
+                                      : AppColors.accentHi,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                      ],
+                      if (isActive)
+                        const Text(
                           'Active',
                           style: TextStyle(
                             fontSize: 11,
@@ -705,16 +749,17 @@ class _HomeScreenState extends State<HomeScreen> {
                             fontWeight: FontWeight.w600,
                           ),
                         )
-                      : isLoading
-                      ? const Text(
+                      else if (isLoading)
+                        const Text(
                           'Loading...',
                           style: TextStyle(
                             fontSize: 11,
                             color: AppColors.orange,
                             fontWeight: FontWeight.w600,
                           ),
-                        )
-                      : null,
+                        ),
+                    ],
+                  ),
                   onTap: () {
                     Navigator.pop(context);
                     if (!isActive && !isLoading) {
@@ -905,8 +950,9 @@ class _HomeScreenState extends State<HomeScreen> {
                 ],
                 if (_llm.isGenerating.value) ...[
                   const SizedBox(width: 12),
-                  Text(
-                    '${_llm.tokensPerSecond.value.toStringAsFixed(1)} t/s',
+                  AnimatedCounter(
+                    value: _llm.tokensPerSecond.value,
+                    format: (v) => '${v.toStringAsFixed(1)} t/s',
                     style: TextStyle(fontSize: 12, color: context.textM),
                   ),
                 ],
@@ -915,21 +961,6 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
 
           const SizedBox(width: 8),
-
-          // Theme toggle
-          Obx(
-            () => IconButton(
-              icon: Icon(
-                _themeCtrl.isDarkMode
-                    ? Icons.light_mode_outlined
-                    : Icons.dark_mode_outlined,
-                size: 20,
-                color: context.textM,
-              ),
-              onPressed: () => _themeCtrl.toggleTheme(),
-              tooltip: 'Toggle theme',
-            ),
-          ),
 
           // Settings
           IconButton(
@@ -966,22 +997,21 @@ class _HomeScreenState extends State<HomeScreen> {
             return ListView.builder(
               controller: _scrollController,
               padding: const EdgeInsets.symmetric(vertical: 16),
-              itemCount:
-                  chat.messages.length + (_chatCtrl.isGenerating.value ? 1 : 0),
+              itemCount: chat.messages.length,
               itemBuilder: (context, index) {
-                if (index < chat.messages.length) {
-                  final msg = chat.messages[index];
-                  // Show speed on the last AI message
-                  final isLastAi =
-                      msg.isAssistant && index == chat.messages.length - 1;
-                  return ChatBubble(message: msg, showSpeed: isLastAi);
-                }
-                return const Padding(
-                  padding: EdgeInsets.symmetric(horizontal: 20, vertical: 8),
-                  child: Align(
-                    alignment: Alignment.centerLeft,
-                    child: TypingIndicator(),
-                  ),
+                final msg = chat.messages[index];
+                // Show speed on the last AI message
+                final isLastAi =
+                    msg.isAssistant && index == chat.messages.length - 1;
+                return ChatBubble(
+                  message: msg,
+                  showSpeed: isLastAi,
+                  isStreaming: isLastAi && _chatCtrl.isGenerating.value,
+                  isRegenerating:
+                      isLastAi && _chatCtrl.isRegenerating.value,
+                  onRegenerate: isLastAi && !_chatCtrl.isGenerating.value
+                      ? () => _chatCtrl.regenerateLast()
+                      : null,
                 );
               },
             );
@@ -1000,22 +1030,32 @@ class _HomeScreenState extends State<HomeScreen> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
+            const KineticGrid(height: 150),
+            const SizedBox(height: 20),
             Container(
               width: 56,
               height: 56,
               decoration: BoxDecoration(
-                gradient: AppColors.accentGradient,
                 borderRadius: BorderRadius.circular(16),
+                boxShadow: [
+                  BoxShadow(
+                    color: AppColors.accent.withValues(alpha: 0.35),
+                    blurRadius: 24,
+                    spreadRadius: 2,
+                  ),
+                ],
               ),
-              child: const Icon(
-                Icons.bolt_rounded,
-                size: 32,
-                color: Colors.white,
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(16),
+                child: Image.asset(
+                  'assets/icon/minix-icon.png',
+                  fit: BoxFit.cover,
+                ),
               ),
             ),
             const SizedBox(height: 24),
-            Text(
-              'How can I help you?',
+            SignalReveal(
+              text: 'How can I help you?',
               style: TextStyle(
                 fontSize: 22,
                 fontWeight: FontWeight.w600,
@@ -1032,6 +1072,8 @@ class _HomeScreenState extends State<HomeScreen> {
                 textAlign: TextAlign.center,
               ),
             ),
+            const SizedBox(height: 22),
+            const RedactionBars(widths: [110, 76, 128, 58], barHeight: 9),
           ],
         ),
       ),
@@ -1039,8 +1081,10 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _buildInputArea() {
-    return Container(
-      padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+    return Stack(
+      children: [
+        Container(
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
       child: Container(
         decoration: BoxDecoration(
           color: context.bgInput,
@@ -1057,6 +1101,17 @@ class _HomeScreenState extends State<HomeScreen> {
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.end,
           children: [
+            // Thinking Orb — the composer itself (ticket 08; faithful
+            // port, monochrome, zero changes per founder ruling)
+            Padding(
+              padding: const EdgeInsets.only(left: 10, bottom: 5),
+              child: Obx(
+                () => ThinkingOrb(
+                  size: 38,
+                  thinking: _chatCtrl.isGenerating.value,
+                ),
+              ),
+            ),
             // Text field
             Expanded(
               child: TextField(
@@ -1102,7 +1157,21 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
           ],
         ),
-      ),
+        ),
+        ),
+        if (_dissolvingText != null)
+          Positioned.fill(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+              child: NexusDisintegrate(
+                text: _dissolvingText!,
+                onDone: () {
+                  if (mounted) setState(() => _dissolvingText = null);
+                },
+              ),
+            ),
+          ),
+      ],
     );
   }
 

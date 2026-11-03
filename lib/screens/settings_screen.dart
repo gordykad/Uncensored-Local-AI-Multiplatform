@@ -3,8 +3,10 @@ import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 
 import '../theme/app_colors.dart';
+import '../widgets/minix_canvas_fx.dart';
+import '../widgets/minix_controls.dart';
+import '../widgets/minix_text_fx.dart';
 import '../controllers/chat_controller.dart';
-import '../controllers/theme_controller.dart';
 import '../controllers/model_controller.dart';
 import '../services/local_api_server_service.dart';
 import '../services/model_manager.dart';
@@ -39,7 +41,6 @@ class _SettingsBody extends StatelessWidget {
   Widget build(BuildContext context) {
     final chatCtrl = Get.find<ChatController>();
     final modelManager = Get.find<ModelManager>();
-    final themeCtrl = Get.find<ThemeController>();
     final apiServer = Get.find<LocalApiServerService>();
     final storage = Get.find<ChatStorageService>();
 
@@ -68,8 +69,8 @@ class _SettingsBody extends StatelessWidget {
                     onPressed: () => Get.back(),
                   ),
                 if (!showBackButton) const SizedBox(width: 16),
-                Text(
-                  'Settings',
+                BlurReveal(
+                  text: 'Settings',
                   style: TextStyle(
                     fontSize: 17,
                     fontWeight: FontWeight.w600,
@@ -86,39 +87,62 @@ class _SettingsBody extends StatelessWidget {
           child: ListView(
             padding: const EdgeInsets.all(20),
             children: [
-              // ── Appearance ────────────────────────────────
-              _sectionHeader(context, 'Appearance'),
-              const SizedBox(height: 12),
+              // ── Identity lockup (ticket 08) ──────────────
               _card(
                 context,
-                child: Obx(
-                  () => SwitchListTile(
-                    title: Text(
-                      'Dark Mode',
-                      style: TextStyle(color: context.text, fontSize: 14),
-                    ),
-                    subtitle: Text(
-                      themeCtrl.isDarkMode
-                          ? 'Using dark theme'
-                          : 'Using light theme',
-                      style: TextStyle(color: context.textD, fontSize: 12),
-                    ),
-                    secondary: Icon(
-                      themeCtrl.isDarkMode
-                          ? Icons.dark_mode_rounded
-                          : Icons.light_mode_rounded,
-                      color: context.textM,
-                    ),
-                    value: themeCtrl.isDarkMode,
-                    onChanged: (val) => themeCtrl.toggleTheme(),
-                    activeThumbColor: AppColors.accent,
-                    contentPadding: const EdgeInsets.symmetric(
-                      horizontal: 16,
-                      vertical: 4,
-                    ),
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Row(
+                    children: [
+                      Container(
+                        width: 44,
+                        height: 44,
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(11),
+                          boxShadow: [
+                            BoxShadow(
+                              color: AppColors.accent.withValues(alpha: 0.35),
+                              blurRadius: 18,
+                              spreadRadius: 1,
+                            ),
+                          ],
+                        ),
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(11),
+                          child: Image.asset(
+                            'assets/icon/minix-icon.png',
+                            fit: BoxFit.cover,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 14),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'ASTRO MINIX',
+                              style: TextStyle(
+                                fontSize: 15,
+                                fontWeight: FontWeight.w700,
+                                letterSpacing: 1.2,
+                                color: context.text,
+                              ),
+                            ),
+                            const SizedBox(height: 3),
+                            Text(
+                              'Black box build \u00b7 dark only, by law',
+                              style: TextStyle(fontSize: 11.5, color: context.textD),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const RedactionBars(widths: [44, 30], barHeight: 7),
+                    ],
                   ),
                 ),
               ),
+              const SizedBox(height: 20),
 
               if (Platform.isAndroid) ...[
                 const SizedBox(height: 12),
@@ -320,72 +344,87 @@ class _SettingsBody extends StatelessWidget {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        SwitchListTile(
-                          title: Text(
-                            'Local API server',
-                            style: TextStyle(color: context.text, fontSize: 14),
-                          ),
-                          subtitle: Text(
-                            'OpenAI base URL: ${apiServer.baseUrl}',
-                            style: TextStyle(
-                              color: context.textD,
-                              fontSize: 12,
+                        Row(
+                          children: [
+                            Icon(
+                              Icons.api_rounded,
+                              color: running ? AppColors.accent : context.textM,
                             ),
-                          ),
-                          secondary: Icon(
-                            Icons.api_rounded,
-                            color: running ? AppColors.accent : context.textM,
-                          ),
-                          value: running,
-                          onChanged: starting
-                              ? null
-                              : (enabled) async {
-                                  try {
-                                    if (enabled) {
-                                      await apiServer.start();
-                                    } else {
-                                      await apiServer.stop();
-                                    }
-                                  } catch (e) {
-                                    Get.snackbar(
-                                      'Local API Error',
-                                      e.toString(),
-                                      snackPosition: SnackPosition.BOTTOM,
-                                    );
-                                  }
-                                },
-                          activeThumbColor: AppColors.accent,
-                          contentPadding: EdgeInsets.zero,
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    'Local API server',
+                                    style: TextStyle(color: context.text, fontSize: 14),
+                                  ),
+                                  const SizedBox(height: 2),
+                                  Text(
+                                    'OpenAI base URL: ${apiServer.baseUrl}',
+                                    style: TextStyle(color: context.textD, fontSize: 12),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            MinixSwitch(
+                              value: running,
+                              onChanged: starting
+                                  ? (_) {}
+                                  : (enabled) async {
+                                      try {
+                                        if (enabled) {
+                                          await apiServer.start();
+                                        } else {
+                                          await apiServer.stop();
+                                        }
+                                      } catch (e) {
+                                        Get.snackbar(
+                                          'Local API Error',
+                                          e.toString(),
+                                          snackPosition: SnackPosition.BOTTOM,
+                                        );
+                                      }
+                                    },
+                            ),
+                          ],
                         ),
                         const SizedBox(height: 12),
-                        SwitchListTile(
-                          title: Text(
-                            'Allow External Connections',
-                            style: TextStyle(color: context.text, fontSize: 14),
-                          ),
-                          subtitle: Text(
-                            'Listen on 0.0.0.0 instead of localhost',
-                            style: TextStyle(
-                              color: context.textD,
-                              fontSize: 12,
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    'Allow External Connections',
+                                    style: TextStyle(color: context.text, fontSize: 14),
+                                  ),
+                                  const SizedBox(height: 2),
+                                  Text(
+                                    'Listen on 0.0.0.0 instead of localhost',
+                                    style: TextStyle(color: context.textD, fontSize: 12),
+                                  ),
+                                ],
+                              ),
                             ),
-                          ),
-                          value: apiServer.allInterfaces.value,
-                          onChanged: starting
-                              ? null
-                              : (enabled) async {
-                                  try {
-                                    await apiServer.setAllInterfaces(enabled);
-                                  } catch (e) {
-                                    Get.snackbar(
-                                      'Settings Error',
-                                      e.toString(),
-                                      snackPosition: SnackPosition.BOTTOM,
-                                    );
-                                  }
-                                },
-                          activeThumbColor: AppColors.orange,
-                          contentPadding: EdgeInsets.zero,
+                            MinixSwitch(
+                              value: apiServer.allInterfaces.value,
+                              onChanged: starting
+                                  ? (_) {}
+                                  : (enabled) async {
+                                      try {
+                                        await apiServer.setAllInterfaces(enabled);
+                                      } catch (e) {
+                                        Get.snackbar(
+                                          'Settings Error',
+                                          e.toString(),
+                                          snackPosition: SnackPosition.BOTTOM,
+                                        );
+                                      }
+                                    },
+                            ),
+                          ],
                         ),
                         if (apiServer.allInterfaces.value)
                           Container(
@@ -651,26 +690,35 @@ class _SettingsBody extends StatelessWidget {
 
               const SizedBox(height: 40),
 
-              // ── About ─────────────────────────────────────
+              // ── Identity (ticket 08) ──────────────────────
+              const ParticleText(height: 130),
+              const SizedBox(height: 10),
               Center(
                 child: Column(
                   children: [
-                    Text(
-                      'Uncensored Local AI v2.0.0',
+                    const PairedGlitchText(a: 'ASTRO MINIX', b: 'BLACK BOX'),
+                    const SizedBox(height: 7),
+                    const GlitchText(text: 'UNCENSORED'),
+                    const SizedBox(height: 9),
+                    SignalReveal(
+                      text: 'NOTHING LEAVES THIS PHONE.',
                       style: TextStyle(
-                        fontSize: 13,
-                        fontWeight: FontWeight.w500,
-                        color: context.textM,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        letterSpacing: 0.8,
+                        color: context.text,
                       ),
                     ),
-                    const SizedBox(height: 4),
+                    const SizedBox(height: 10),
                     Text(
-                      'Powered by llamadart + llama.cpp',
+                      'Astro MiniX 1.4.0 \u00b7 Powered by llamadart + llama.cpp',
                       style: TextStyle(fontSize: 11, color: context.textD),
                     ),
                   ],
                 ),
               ),
+              const SizedBox(height: 20),
+              const GravityStars(height: 150),
               const SizedBox(height: 28),
 
               // ── App Logs ──────────────────────────────────
@@ -981,8 +1029,11 @@ class _HardwareSettingsCardState extends State<_HardwareSettingsCard> {
 
           if (_showManual) ...[
             const SizedBox(height: 12),
-            Row(
-              children: _backendOptions(),
+            MinixSegmented(
+              options: _backendOptionLabels(),
+              selectedIndex:
+                  _backendOptionValues().indexOf(_backend).clamp(0, 2),
+              onSelect: (i) => _saveBackend(_backendOptionValues()[i]),
             ),
             const SizedBox(height: 16),
             Row(
@@ -1044,29 +1095,39 @@ class _HardwareSettingsCardState extends State<_HardwareSettingsCard> {
             const SizedBox(height: 12),
             Text('Context Size', style: TextStyle(color: context.text, fontSize: 14)),
             const SizedBox(height: 8),
-            Row(children: _chips(
-              values: const [0, 1024, 2048, 4096, 8192],
-              labels: const ['Default', '1024', '2048', '4096', '8192'],
-              selected: _contextSize,
-              onTap: _onContextSelected,
-            )),
+            MinixSegmented(
+              options: const ['Default', '1024', '2048', '4096', '8192'],
+              selectedIndex:
+                  const [0, 1024, 2048, 4096, 8192].indexOf(_contextSize).clamp(0, 4),
+              onSelect: (i) =>
+                  _onContextSelected(const [0, 1024, 2048, 4096, 8192][i]),
+            ),
             const SizedBox(height: 16),
             Text('Threads', style: TextStyle(color: context.text, fontSize: 14)),
             const SizedBox(height: 8),
-            Row(children: _chips(
-              values: const [0, 2, 4, 6, 8],
-              labels: const ['Auto', '2', '4', '6', '8'],
-              selected: _threadCount,
-              onTap: (v) {
-                setState(() => _threadCount = v);
-                widget.storage.threadCount = v;
+            MinixSegmented(
+              options: const ['Auto', '2', '4', '6', '8'],
+              selectedIndex:
+                  const [0, 2, 4, 6, 8].indexOf(_threadCount).clamp(0, 4),
+              onSelect: (i) {
+                const values = [0, 2, 4, 6, 8];
+                setState(() => _threadCount = values[i]);
+                widget.storage.threadCount = values[i];
               },
-            )),
+            ),
           ],
         ],
       ),
     );
   }
+
+  // Ticket 08: backend choices as segmented-control data.
+  List<String> _backendOptionValues() => (Platform.isIOS || Platform.isMacOS)
+      ? const ['auto', 'metal', 'cpu']
+      : const ['cpu', 'vulkan', 'opencl'];
+  List<String> _backendOptionLabels() => (Platform.isIOS || Platform.isMacOS)
+      ? const ['Auto', 'Metal', 'CPU']
+      : const ['CPU', 'Vulkan', 'OpenCL'];
 
   // Platform-appropriate backend choices (ticket 03a): Apple platforms
   // get Auto/Metal/CPU - Vulkan and OpenCL do not exist on iOS.

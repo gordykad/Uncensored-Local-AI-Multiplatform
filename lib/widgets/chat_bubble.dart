@@ -6,13 +6,29 @@ import 'package:get/get.dart';
 import '../theme/app_colors.dart';
 import '../models/message_model.dart';
 import '../services/llm_service.dart';
+import 'minix_canvas_fx.dart';
+import 'minix_controls.dart';
+import 'minix_text_fx.dart';
 
 class ChatBubble extends StatelessWidget {
   final MessageModel message;
   /// If true, this is the last AI message and we show speed info
   final bool showSpeed;
 
-  const ChatBubble({super.key, required this.message, this.showSpeed = false});
+  /// Ticket 08: this bubble is the live stream — render Stream Reply
+  /// (#26), or the #2 progressive style while [isRegenerating].
+  final bool isStreaming;
+  final bool isRegenerating;
+  final VoidCallback? onRegenerate;
+
+  const ChatBubble({
+    super.key,
+    required this.message,
+    this.showSpeed = false,
+    this.isStreaming = false,
+    this.isRegenerating = false,
+    this.onRegenerate,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -27,20 +43,31 @@ class ChatBubble extends StatelessWidget {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Avatar
-          Container(
-            width: 28,
-            height: 28,
-            decoration: BoxDecoration(
-              color: isUser ? context.textM : AppColors.accent,
+          // Avatar — the R1 mark is the assistant's face (ticket 08)
+          if (isUser)
+            Container(
+              width: 28,
+              height: 28,
+              decoration: BoxDecoration(
+                color: context.textM,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: const Icon(
+                Icons.person_rounded,
+                size: 16,
+                color: Colors.white,
+              ),
+            )
+          else
+            ClipRRect(
               borderRadius: BorderRadius.circular(8),
+              child: Image.asset(
+                'assets/icon/minix-icon.png',
+                width: 28,
+                height: 28,
+                fit: BoxFit.cover,
+              ),
             ),
-            child: Icon(
-              isUser ? Icons.person_rounded : Icons.bolt_rounded,
-              size: 16,
-              color: Colors.white,
-            ),
-          ),
           const SizedBox(width: 14),
 
           // Content
@@ -63,6 +90,32 @@ class ChatBubble extends StatelessWidget {
             color: context.text,
             height: 1.6,
           ),
+        ),
+      );
+    }
+
+    // AI: while streaming, the Stream Reply port owns the text (#26;
+    // #2 progressive style when regenerating). Prefill = orb + shimmer.
+    if (isStreaming) {
+      if (message.content.isEmpty) {
+        return const Padding(
+          padding: EdgeInsets.only(top: 3),
+          child: Row(
+            children: [
+              ThinkingOrb(size: 30, thinking: true),
+              SizedBox(width: 10),
+              ShimmerText(text: 'Generating'),
+            ],
+          ),
+        );
+      }
+      return Padding(
+        padding: const EdgeInsets.only(top: 3),
+        child: StreamReplyText(
+          text: message.content,
+          streaming: true,
+          regenerating: isRegenerating,
+          style: TextStyle(fontSize: 15, height: 1.6, color: context.text),
         ),
       );
     }
@@ -145,6 +198,26 @@ class ChatBubble extends StatelessWidget {
                   ),
                 ),
 
+                // Regenerate (ticket 08 — Stream Reply anatomy)
+                if (onRegenerate != null && !isStreaming) ...[
+                  const SizedBox(width: 12),
+                  InkWell(
+                    onTap: onRegenerate,
+                    borderRadius: BorderRadius.circular(4),
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.refresh_rounded, size: 14, color: context.textD),
+                          const SizedBox(width: 4),
+                          Text('Regenerate', style: TextStyle(fontSize: 12, color: context.textD)),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+
                 // Speed indicator (on the last AI message)
                 if (showSpeed) ...[
                   const SizedBox(width: 12),
@@ -159,8 +232,9 @@ class ChatBubble extends StatelessWidget {
                       children: [
                         Icon(Icons.speed_rounded, size: 14, color: context.textD),
                         const SizedBox(width: 4),
-                        Text(
-                          '${speed.toStringAsFixed(1)} t/s',
+                        AnimatedCounter(
+                          value: speed,
+                          format: (v) => '${v.toStringAsFixed(1)} t/s',
                           style: TextStyle(fontSize: 12, color: context.textD),
                         ),
                       ],

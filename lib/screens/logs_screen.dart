@@ -8,6 +8,9 @@ import '../theme/app_colors.dart';
 import '../services/llm_service.dart';
 import '../services/log_service.dart';
 import '../services/memory_probe.dart';
+import '../services/model_manager.dart';
+import '../widgets/minix_controls.dart';
+import '../widgets/minix_text_fx.dart';
 
 class LogsScreen extends StatelessWidget {
   const LogsScreen({super.key});
@@ -41,8 +44,8 @@ class LogsScreen extends StatelessWidget {
                     icon: Icon(Icons.arrow_back_rounded, color: context.text),
                     onPressed: () => Get.back(),
                   ),
-                  Text(
-                    'App Logs',
+                  BlurReveal(
+                    text: 'App Logs',
                     style: TextStyle(
                       fontSize: 17,
                       fontWeight: FontWeight.w600,
@@ -87,6 +90,9 @@ class LogsScreen extends StatelessWidget {
 
           // ── Diagnostics header (ticket 01) ──────────
           const _DiagnosticsHeader(),
+
+          // ── Engine panel (ticket 08): stats card + agent trace ──
+          const _EnginePanel(),
 
           // ── Filter chips ──────────────────────────────
           _FilterBar(),
@@ -418,6 +424,96 @@ class _DiagnosticsHeaderState extends State<_DiagnosticsHeader> {
             }),
         ],
       ),
+    );
+  }
+}
+
+
+// ── Engine panel (ticket 08) ──────────────────────────────
+// Statistics Card (#9) fed by the REAL probes + Agent Trace (#8) of the
+// engine's run phases. No demo values anywhere.
+class _EnginePanel extends StatelessWidget {
+  const _EnginePanel();
+
+  @override
+  Widget build(BuildContext context) {
+    final llm = Get.isRegistered<LlmService>() ? Get.find<LlmService>() : null;
+    if (llm == null) return const SizedBox.shrink();
+    final models =
+        Get.isRegistered<ModelManager>() ? Get.find<ModelManager>() : null;
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(12, 10, 12, 6),
+      decoration: BoxDecoration(
+        color: context.bgPanel,
+        border: Border(
+          bottom: BorderSide(color: context.border, width: 0.5),
+        ),
+      ),
+      child: Obx(() {
+        final loaded = llm.isLoaded.value;
+        final generating = llm.isGenerating.value;
+        final loading = llm.isLoadingModel.value;
+        final onDisk = models == null
+            ? 0
+            : models.allModels
+                .where((m) => models.downloadedModels.contains(m.filename))
+                .length;
+        final rows = <({String label, String value})>[
+          (
+            label: 'Model',
+            value: loaded
+                ? llm.loadedModelPath.value.split('/').last
+                : 'none loaded',
+          ),
+          (label: 'Models on disk', value: '$onDisk'),
+          (
+            label: 'Last decode',
+            value: llm.lastDecodeTps.value > 0
+                ? '${llm.lastDecodeTps.value.toStringAsFixed(2)} tok/s'
+                : '\u2014',
+          ),
+          (
+            label: 'Last TTFT',
+            value: llm.lastTtftMs.value > 0
+                ? '${llm.lastTtftMs.value} ms'
+                : '\u2014',
+          ),
+          (
+            label: 'Last reply tokens',
+            value: llm.lastGenerationTokens.value > 0
+                ? '${llm.lastGenerationTokens.value}'
+                : '\u2014',
+          ),
+        ];
+        final events = <({String label, bool done, bool active})>[
+          (label: 'model loaded', done: loaded, active: loading),
+          (label: 'context ready', done: loaded && !loading, active: false),
+          (
+            label: 'first token',
+            done: llm.lastTtftMs.value > 0,
+            active: generating && llm.lastTtftMs.value == 0,
+          ),
+          (
+            label: 'streaming',
+            done: !generating && llm.lastGenerationTokens.value > 0,
+            active: generating,
+          ),
+          (
+            label: 'done',
+            done: !generating && llm.lastGenerationTokens.value > 0,
+            active: false,
+          ),
+        ];
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            StatsCard(title: 'Engine', rows: rows),
+            const SizedBox(height: 12),
+            AgentTrace(events: events),
+          ],
+        );
+      }),
     );
   }
 }

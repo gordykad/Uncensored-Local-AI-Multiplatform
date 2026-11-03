@@ -60,7 +60,11 @@ class AppTheme {
     );
   }
 
-  static ThemeData get lightTheme {
+  // Ticket 08: dark-only — the light theme IS the dark theme, so no
+  // stale frame can ever flash white.
+  static ThemeData get lightTheme => darkTheme;
+
+  static ThemeData get _stockLightTheme {
     return ThemeData(
       brightness: Brightness.light,
       scaffoldBackgroundColor: AppColors.lightBg,

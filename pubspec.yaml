@@ -1,7 +1,7 @@
 name: portable_ai_flutter
 description: "Portable AI — Run uncensored local LLMs natively on any device."
 publish_to: 'none'
-version: 1.3.0+8
+version: 1.4.0+9
 
 environment:
   sdk: ^3.11.4
@@ -60,3 +60,4 @@ flutter:
   uses-material-design: true
   assets:
     - assets/models_catalog.json
+    - assets/icon/minix-icon.png

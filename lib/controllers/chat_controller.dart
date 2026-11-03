@@ -13,6 +13,7 @@ class ChatController extends GetxController {
   final chats = <ChatModel>[].obs;
   final activeChatId = RxnString();
   final isGenerating = false.obs;
+  final isRegenerating = false.obs; // ticket 08: drives the #2 reply style
   final streamedResponse = ''.obs;
   final temperature = 0.7.obs;
   final systemPrompt = ''.obs;
@@ -95,8 +96,33 @@ class ChatController extends GetxController {
         .map((m) => m.toLlamaMessage())
         .toList();
 
+    await _runGeneration(chat, regenerating: false);
+  }
+
+  /// Regenerate the last assistant reply (ticket 08 — completes the
+  /// Stream Reply anatomy: stop/regenerate; the regenerated run renders
+  /// in the #2 progressive style via [isRegenerating]).
+  Future<void> regenerateLast() async {
+    if (isGenerating.value) return;
+    final chat = activeChat;
+    if (chat == null || chat.messages.isEmpty) return;
+    if (!chat.messages.last.isAssistant) return;
+    chat.messages.removeLast();
+    chats.refresh();
+    await _runGeneration(chat, regenerating: true);
+  }
+
+  Future<void> _runGeneration(ChatModel chat,
+      {required bool regenerating}) async {
+    // Build message history for LLM (system messages excluded)
+    final history = chat.messages
+        .where((m) => !m.isSystem)
+        .map((m) => m.toLlamaMessage())
+        .toList();
+
     // Start generation
     isGenerating.value = true;
+    isRegenerating.value = regenerating;
     streamedResponse.value = '';
 
     final aiMsg = MessageModel(role: MessageRole.assistant, content: '');
@@ -132,6 +158,7 @@ class ChatController extends GetxController {
           ), '')
           .trim();
       isGenerating.value = false;
+      isRegenerating.value = false;
       streamedResponse.value = '';
       chat.updatedAt = DateTime.now();
       _storage.saveChat(chat);

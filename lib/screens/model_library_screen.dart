@@ -7,6 +7,9 @@ import '../controllers/model_controller.dart';
 import '../services/model_manager.dart';
 import '../models/ai_model_info.dart';
 import '../widgets/model_card.dart';
+import '../widgets/minix_canvas_fx.dart';
+import '../widgets/minix_controls.dart';
+import '../widgets/minix_text_fx.dart';
 
 class ModelLibraryScreen extends StatelessWidget {
   final bool embedded;
@@ -36,6 +39,14 @@ class _ModelLibraryBody extends StatefulWidget {
 
 class _ModelLibraryBodyState extends State<_ModelLibraryBody> {
   _Filter _filter = _Filter.all;
+  final _searchCtrl = TextEditingController();
+  String _query = '';
+
+  @override
+  void dispose() {
+    _searchCtrl.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -67,8 +78,8 @@ class _ModelLibraryBodyState extends State<_ModelLibraryBody> {
                     onPressed: () => Get.back(),
                   ),
                 if (!widget.showBackButton) const SizedBox(width: 12),
-                Text(
-                  'Models',
+                BlurReveal(
+                  text: 'Models',
                   style: TextStyle(
                     fontSize: 17,
                     fontWeight: FontWeight.w600,
@@ -80,6 +91,16 @@ class _ModelLibraryBodyState extends State<_ModelLibraryBody> {
                 const SizedBox(width: 8),
               ],
             ),
+          ),
+        ),
+
+        // ── Search (ticket 08: #6 Search Input Group, live-filters) ──
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+          child: SearchInputGroup(
+            controller: _searchCtrl,
+            hint: 'Search models',
+            onChanged: (q) => setState(() => _query = q.trim()),
           ),
         ),
 
@@ -136,16 +157,19 @@ class _ModelLibraryBodyState extends State<_ModelLibraryBody> {
               });
             }
 
+            if (_query.isNotEmpty) {
+              filtered = filtered
+                  .where((m) =>
+                      m.name.toLowerCase().contains(_query.toLowerCase()))
+                  .toList();
+            }
+
             if (allCatalog.isEmpty) {
               return Center(
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Icon(
-                      Icons.widgets_outlined,
-                      size: 48,
-                      color: context.textD,
-                    ),
+                    const SkeletonThread(groups: 2),
                     const SizedBox(height: 16),
                     Text(
                       'No models in catalog.',
@@ -161,11 +185,7 @@ class _ModelLibraryBodyState extends State<_ModelLibraryBody> {
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Icon(
-                      Icons.filter_list_off_rounded,
-                      size: 40,
-                      color: context.textD,
-                    ),
+                    const KineticGrid(height: 140),
                     const SizedBox(height: 12),
                     Text(
                       'No models match this filter.',

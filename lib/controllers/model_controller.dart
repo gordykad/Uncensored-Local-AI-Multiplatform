@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
+import '../widgets/minix_controls.dart';
 import 'package:file_picker/file_picker.dart';
 
 import '../models/ai_model_info.dart';
@@ -269,26 +270,18 @@ class ModelController extends GetxController {
   Future<bool> _confirmLargeModel(double sizeGb) async {
     if (sizeGb < 3.5) return true; // Safe size for most devices
 
-    final completer = Completer<bool>();
-    Get.defaultDialog(
-      title: 'Large Model Warning',
-      titlePadding: const EdgeInsets.only(top: 20, left: 20, right: 20),
-      contentPadding: const EdgeInsets.all(20),
-      middleText: 'This model is ${sizeGb.toStringAsFixed(1)} GB.\n\nDevices with less than 8GB of RAM may crash or run out of storage while processing this model.\n\nAre you sure you want to proceed?',
-      textConfirm: 'Proceed',
-      textCancel: 'Cancel',
-      confirmTextColor: Colors.white,
-      buttonColor: Colors.orange,
-      cancelTextColor: Colors.orange,
-      onConfirm: () {
-        Get.back();
-        completer.complete(true);
-      },
-      onCancel: () {
-        completer.complete(false);
-      },
+    // Ticket 08: the #11 Approval Card replaces the stock warning dialog.
+    final ctx = Get.context;
+    if (ctx == null) return false;
+    return showApprovalDialog(
+      ctx,
+      title: 'Large Model',
+      itemName: 'Model download',
+      sizeGb: sizeGb,
+      confirmLabel: 'Proceed',
+      note:
+          'Devices with less than 8GB of RAM may crash or run out of storage while processing this model.',
     );
-    return completer.future;
   }
 
   /// Import a .gguf file via file picker.
