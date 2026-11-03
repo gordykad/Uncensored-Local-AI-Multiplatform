@@ -19,6 +19,7 @@ import 'package:path_provider/path_provider.dart';
 
 import '../models/image_entry.dart';
 import '../services/image_gen_service.dart';
+import '../services/log_service.dart';
 import '../theme/app_colors.dart';
 import '../widgets/faithful/nexus_velocity.dart';
 import '../widgets/faithful/orb.dart';
@@ -66,14 +67,24 @@ class _ImageGenScreenState extends State<ImageGenScreen>
   int _phIndex = 0;
   Timer? _phTimer;
 
+  bool _loggedBuild = false; // build 18 diagnostics
+
+  void _diag(String msg) {
+    try {
+      Get.find<LogService>().info(msg, source: 'ImageGen');
+    } catch (_) {}
+  }
+
   @override
   void initState() {
+    _diag('initState start');
     super.initState();
     _beam = AnimationController(
         vsync: this, duration: const Duration(seconds: 6))
       ..repeat();
     _entries = _svc.localEntries();
     _current = _entries.isNotEmpty ? _entries.first : null;
+    _diag('initState entries=${_entries.length} online=${_svc.connectivityOn}');
     _input.addListener(() => setState(() {}));
     _phTimer = Timer.periodic(const Duration(milliseconds: 2800), (_) {
       if (!mounted || _busy || _input.text.isNotEmpty) return;
@@ -180,6 +191,10 @@ class _ImageGenScreenState extends State<ImageGenScreen>
 
   @override
   Widget build(BuildContext context) {
+    if (!_loggedBuild) {
+      _loggedBuild = true;
+      _diag('first build');
+    }
     final online = _online;
     final body = Column(
       children: [

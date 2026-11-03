@@ -11,6 +11,7 @@ import 'models/message_model.dart';
 import 'theme/app_theme.dart';
 import 'bindings/app_bindings.dart';
 import 'controllers/theme_controller.dart';
+import 'services/log_service.dart';
 // ignore: unused_import
 import 'screens/splash_screen.dart'; // needed in routes/app_routes.dart
 import 'routes/app_routes.dart';
@@ -24,11 +25,13 @@ Future<void> main() async {
     FlutterError.onError = (details) {
       FlutterError.presentError(details);
       debugPrint('FlutterError: ${details.exception}');
+      _captureToLog('FlutterError', details.exception, details.stack);
     };
 
     // Catch unhandled platform errors (native crashes, isolate errors)
     PlatformDispatcher.instance.onError = (error, stack) {
       debugPrint('PlatformError: $error\n$stack');
+      _captureToLog('PlatformError', error, stack);
       return true; // Prevent app from crashing
     };
 
@@ -54,7 +57,17 @@ Future<void> main() async {
   }, (error, stack) {
     // Last-resort error handler — prevents silent force-close
     debugPrint('Unhandled error: $error\n$stack');
+    _captureToLog('Unhandled', error, stack);
   });
+}
+
+/// Build 18 diagnostics: framework errors land in the LogService ring
+/// buffer (readable via /admin/logs) instead of dying in the console.
+void _captureToLog(String kind, Object error, StackTrace? stack) {
+  try {
+    Get.find<LogService>()
+        .error('$kind: $error', source: 'Framework');
+  } catch (_) {}
 }
 
 class PortableAIApp extends StatelessWidget {

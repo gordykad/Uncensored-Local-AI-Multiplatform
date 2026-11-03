@@ -7,6 +7,7 @@ import '../controllers/model_controller.dart';
 import '../controllers/theme_controller.dart';
 import '../services/llm_service.dart';
 import '../services/admin_activity_service.dart';
+import '../services/log_service.dart';
 import '../widgets/chat_sidebar.dart';
 import '../widgets/chat_bubble.dart';
 import '../widgets/faithful/orb.dart';
@@ -37,6 +38,7 @@ class _HomeScreenState extends State<HomeScreen> {
   final _msgController = TextEditingController();
   final _scrollController = ScrollController();
   bool _sidebarOpen = true;
+  bool _loggedBuild = false; // build 18 diagnostics
   String? _dissolvingText; // ticket 08: Nexus send disintegration
   bool _autoScrollToBottom = true;
   String? _lastRenderedChatId;
@@ -113,6 +115,14 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget build(BuildContext context) {
     final width = MediaQuery.of(context).size.width;
     final isDesktop = width >= 768;
+    if (!_loggedBuild) {
+      _loggedBuild = true;
+      try {
+        Get.find<LogService>().info(
+            'Home build: size=${MediaQuery.of(context).size} desktop=$isDesktop',
+            source: 'UI');
+      } catch (_) {}
+    }
 
     // Keyboard fix (Kai, 2026-11-03): a tap anywhere outside a text
     // field drops the keyboard. The IndexedStack tabs keep the chat
@@ -384,6 +394,10 @@ class _HomeScreenState extends State<HomeScreen> {
               onSelect: (i) {
                 // Keyboard fix: switching tabs always drops the keyboard.
                 FocusManager.instance.primaryFocus?.unfocus();
+                try {
+                  Get.find<LogService>()
+                      .info('Tab selected: $i', source: 'UI');
+                } catch (_) {}
                 setState(() => _mobileTabIndex = i);
               },
             ),
