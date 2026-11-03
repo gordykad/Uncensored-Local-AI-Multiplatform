@@ -84,4 +84,8 @@ workflows:
     publishing:
       app_store_connect:
         auth: integration
-        submit_to_testflight: true
+        # Upload ONLY. Internal TestFlight groups get the build after
+        # processing with no submission. submit_to_testflight makes
+        # Codemagic attempt an EXTERNAL beta review submission, which
+        # this app never does (internal-only distribution, founder law).
+        submit_to_testflight: false
