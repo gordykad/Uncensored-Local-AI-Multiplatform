@@ -257,6 +257,9 @@ class ImageGenService {
     throw Exception('The queue stream ended before the image arrived');
   }
 
+  static String _short(String s) =>
+      s.length <= 140 ? s : '${s.substring(0, 140)}...';
+
   Future<List<int>> _fetchGradioFile(
       String base, Map<String, dynamic> file) async {
     final url = file['url']?.toString();
