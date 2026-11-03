@@ -6,6 +6,7 @@ import 'package:llamadart/llamadart.dart';
 import 'package:path/path.dart' as p;
 
 import 'wakelock_service.dart';
+import 'memory_probe.dart';
 import 'chat_storage_service.dart';
 import 'log_service.dart';
 
@@ -20,6 +21,20 @@ class LlmService extends GetxService {
   final tokensPerSecond = 0.0.obs;
   final lastGenerationTokens = 0.obs;
   final lastGenerationSpeed = 0.0.obs;
+
+  // ── Fixed meter (ticket 01) ────────────────────────────────
+  // The V1 counter started its stopwatch before prompt build + prefill
+  // and counted stream chunks, so its figures are NOT comparable to
+  // these (a 26B run that displayed "~0.0 tok/s" really decoded at
+  // ~0.05 tok/s end-to-end). Here: the watch starts when the engine
+  // stream is subscribed; time to the first event is prefill (TTFT);
+  // events after it are decode, rated as (events-1) over the
+  // first-to-last window.
+  final lastPromptTokens = 0.obs;
+  final lastTtftMs = 0.obs;
+  final lastPrefillTps = 0.0.obs;
+  final lastDecodeTps = 0.0.obs;
+  final lastMeterSummary = ''.obs;
 
   // ── Loading progress tracking ──────────────────────────────
   final isLoadingModel = false.obs;
@@ -72,6 +87,13 @@ class LlmService extends GetxService {
 
     final filename = p.basename(path);
     log?.info('Loading model: $filename', source: 'LLM');
+    final headBefore = await MemoryProbe.availableBytes();
+    if (headBefore != null) {
+      log?.info(
+        'Memory headroom before load: ${(headBefore / 1073741824).toStringAsFixed(2)} GB',
+        source: 'LLM',
+      );
+    }
 
     _loadingCancelled = false;
     isLoadingModel.value = true;
@@ -147,13 +169,18 @@ class LlmService extends GetxService {
         return;
       }
 
-      // Use smaller context on Android to prevent OOM kills.
-      // Desktop can handle 2048, but Android devices with limited RAM
-      // need 1024 to avoid the Low Memory Killer (LMK).
-      final contextSize = Platform.isAndroid ? 1024 : 2048;
-
-      // Map the string backend to GpuBackend enum
+      // Context size (ticket 03 knob): a stored value wins; 0 keeps the
+      // platform default - smaller on Android to prevent OOM kills from
+      // the Low Memory Killer (LMK), 2048 elsewhere.
       final storage = Get.find<ChatStorageService>();
+      final contextSize = storage.contextSize > 0
+          ? storage.contextSize
+          : (Platform.isAndroid ? 1024 : 2048);
+
+      // Map the string backend to GpuBackend enum. 'metal' and 'auto'
+      // are mapped since ticket 03a - llamadart has shipped both all
+      // along, but the old switch silently forced every unlisted value
+      // to CPU, and the storage default was 'cpu' besides.
       GpuBackend parsedBackend;
       switch (storage.backendType) {
         case 'vulkan':
@@ -162,6 +189,12 @@ class LlmService extends GetxService {
         case 'opencl':
           parsedBackend = GpuBackend.opencl;
           break;
+        case 'metal':
+          parsedBackend = GpuBackend.metal;
+          break;
+        case 'auto':
+          parsedBackend = GpuBackend.auto;
+          break;
         default:
           parsedBackend = GpuBackend.cpu;
       }
@@ -169,16 +202,36 @@ class LlmService extends GetxService {
       // Read gpu layers
       final userGpuLayers = storage.gpuLayers;
 
-      // Optimize threads: 4 for both generation and batch processing to keep memory stable.
+      // Ticket 03a: with a GPU backend selected, a stored layer count of
+      // 0 means "not configured" - resolve it as "offload whatever
+      // fits": resident models (weights fit inside the current headroom
+      // with margin left for KV cache + compute buffers) get every
+      // layer on the GPU; oversized models (the streamed-MoE class)
+      // stay on CPU until ticket 11's hybrid profile rules on them.
+      var effectiveGpuLayers = userGpuLayers;
+      if ((parsedBackend == GpuBackend.metal ||
+              parsedBackend == GpuBackend.auto) &&
+          userGpuLayers == 0) {
+        final avail = await MemoryProbe.availableBytes();
+        if (avail != null && fileSize <= avail * 0.75) {
+          effectiveGpuLayers = 999;
+        }
+      }
+
+      // Threads (ticket 03 knob): a stored value wins; 0 keeps the
+      // legacy auto rule (4 when the device has >4 processors, else 0).
+      final threads = storage.threadCount > 0
+          ? storage.threadCount
+          : (Platform.numberOfProcessors > 4 ? 4 : 0);
       final params = ModelParams(
         contextSize: contextSize,
-        gpuLayers: userGpuLayers, 
+        gpuLayers: effectiveGpuLayers,
         preferredBackend: parsedBackend,
-        numberOfThreads: Platform.numberOfProcessors > 4 ? 4 : 0, 
-        numberOfThreadsBatch: Platform.numberOfProcessors > 4 ? 4 : 0,
+        numberOfThreads: threads,
+        numberOfThreadsBatch: threads,
       );
 
-      log?.info('Backend=$parsedBackend, GPU layers=$userGpuLayers, ctx=$contextSize, threads=${Platform.numberOfProcessors > 4 ? 4 : 0}', source: 'LLM');
+      log?.info('Backend=$parsedBackend, GPU layers=$effectiveGpuLayers (stored $userGpuLayers), ctx=$contextSize, threads=$threads', source: 'LLM');
 
       await _engine!.loadModel(path, modelParams: params);
       progressTimer.cancel();
@@ -195,6 +248,13 @@ class LlmService extends GetxService {
       isLoaded.value = true;
       loadedModelPath.value = path;
       log?.info('Model loaded successfully: $filename', source: 'LLM');
+      final headAfter = await MemoryProbe.availableBytes();
+      if (headAfter != null) {
+        log?.info(
+          'Memory headroom after load: ${(headAfter / 1073741824).toStringAsFixed(2)} GB',
+          source: 'LLM',
+        );
+      }
 
       // Enable wake lock for inference on mobile (keeps app from being killed)
       final modelName = p.basenameWithoutExtension(path);
@@ -275,21 +335,26 @@ class LlmService extends GetxService {
 
     isGenerating.value = true;
     tokensPerSecond.value = 0.0;
-    final stopwatch = Stopwatch()..start();
-    int tokenCount = 0;
 
     // Buffer to detect multi-token stop sequences
     String buffer = '';
 
-    try {
-      // Build the full prompt from messages
-      final prompt = _buildPrompt(messages, systemPrompt);
+    // Fixed meter (ticket 01): tokenize first (outside the watch), then
+    // start the watch as the engine stream is subscribed.
+    final prompt = _buildPrompt(messages, systemPrompt);
+    final promptTokens = await countTokens(prompt);
+    final genWatch = Stopwatch()..start();
+    int eventCount = 0;
+    int? firstEventMs;
 
+    try {
       await for (final token in _engine!.generate(prompt)) {
-        tokenCount++;
-        if (stopwatch.elapsedMilliseconds > 0) {
-          tokensPerSecond.value =
-              tokenCount / (stopwatch.elapsedMilliseconds / 1000);
+        final nowMs = genWatch.elapsedMilliseconds;
+        firstEventMs ??= nowMs;
+        eventCount++;
+        final decodeMs = nowMs - (firstEventMs ?? nowMs);
+        if (eventCount > 1 && decodeMs > 0) {
+          tokensPerSecond.value = (eventCount - 1) / (decodeMs / 1000);
         }
 
         // Accumulate into buffer for stop-pattern detection
@@ -337,9 +402,8 @@ class LlmService extends GetxService {
         }
       }
     } finally {
-      stopwatch.stop();
-      lastGenerationTokens.value = tokenCount;
-      lastGenerationSpeed.value = tokensPerSecond.value;
+      genWatch.stop();
+      _finishMeter(genWatch, promptTokens, eventCount, firstEventMs);
       isGenerating.value = false;
     }
   }
@@ -358,8 +422,17 @@ class LlmService extends GetxService {
 
     isGenerating.value = true;
     tokensPerSecond.value = 0.0;
-    final stopwatch = Stopwatch()..start();
-    int tokenCount = 0;
+
+    // Fixed meter (ticket 01): same accounting as generate(). Prompt
+    // tokens are the summed token counts of the message contents
+    // (template overhead excluded — noted in the METER log line).
+    var promptTokens = 0;
+    for (final m in messages) {
+      promptTokens += await countTokens(m.content);
+    }
+    final genWatch = Stopwatch()..start();
+    int eventCount = 0;
+    int? firstEventMs;
 
     try {
       await for (final chunk in _engine!.create(
@@ -371,19 +444,62 @@ class LlmService extends GetxService {
         final content = choice?.delta.content;
         if (content == null || content.isEmpty) continue;
 
-        tokenCount++;
-        if (stopwatch.elapsedMilliseconds > 0) {
-          tokensPerSecond.value =
-              tokenCount / (stopwatch.elapsedMilliseconds / 1000);
+        final nowMs = genWatch.elapsedMilliseconds;
+        firstEventMs ??= nowMs;
+        eventCount++;
+        final decodeMs = nowMs - (firstEventMs ?? nowMs);
+        if (eventCount > 1 && decodeMs > 0) {
+          tokensPerSecond.value = (eventCount - 1) / (decodeMs / 1000);
         }
         yield content;
       }
     } finally {
-      stopwatch.stop();
-      lastGenerationTokens.value = tokenCount;
-      lastGenerationSpeed.value = tokensPerSecond.value;
+      genWatch.stop();
+      _finishMeter(genWatch, promptTokens, eventCount, firstEventMs);
       isGenerating.value = false;
     }
+  }
+
+  /// Close out one generation's fixed-meter measurements (ticket 01):
+  /// decode tok/s from the first-to-last event window, prefill tok/s from
+  /// prompt tokens over TTFT, both written to the diagnostics log so any
+  /// speed claim on any device can be checked against a METER line.
+  void _finishMeter(
+    Stopwatch watch,
+    int promptTokens,
+    int events,
+    int? firstEventMs,
+  ) {
+    final totalMs = watch.elapsedMilliseconds;
+    final ttftMs = firstEventMs ?? totalMs;
+    final decodeMs = totalMs - ttftMs;
+    final decodeTps = (events > 1 && decodeMs > 0)
+        ? (events - 1) / (decodeMs / 1000)
+        : 0.0;
+    final prefillTps = (promptTokens > 0 && ttftMs > 0)
+        ? promptTokens / (ttftMs / 1000)
+        : 0.0;
+    lastPromptTokens.value = promptTokens;
+    lastTtftMs.value = ttftMs;
+    lastPrefillTps.value = prefillTps;
+    lastDecodeTps.value = decodeTps;
+    lastGenerationTokens.value = events;
+    lastGenerationSpeed.value = decodeTps;
+    tokensPerSecond.value = decodeTps;
+    lastMeterSummary.value =
+        'prompt $promptTokens tok - TTFT ${ttftMs}ms - '
+        'prefill ${prefillTps.toStringAsFixed(1)} tok/s - '
+        'decode $events tok @ ${decodeTps.toStringAsFixed(2)} tok/s - '
+        'total ${totalMs}ms';
+    try {
+      Get.find<LogService>().info(
+        'METER model=$loadedModelFilename promptTok=$promptTokens '
+        'ttftMs=$ttftMs prefillTps=${prefillTps.toStringAsFixed(2)} '
+        'decodeTok=$events decodeTps=${decodeTps.toStringAsFixed(3)} '
+        'totalMs=$totalMs',
+        source: 'METER',
+      );
+    } catch (_) {}
   }
 
   Future<int> countTokens(String text) async {

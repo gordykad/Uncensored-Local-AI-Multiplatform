@@ -103,8 +103,28 @@ class ChatStorageService extends GetxService {
 
   set gpuLayers(int value) => _settingsBox.put('gpu_layers', value);
 
+  // Default is 'auto' since ticket 03a: llamadart resolves it to the
+  // best available backend (Metal on iOS). The old 'cpu' default, plus
+  // a backend switch that never mapped Metal, is why no fleet phone
+  // ever ran a token on its GPU in V1. Only applies when the user has
+  // never written the setting.
   String get backendType =>
-      _settingsBox.get('backend_type', defaultValue: 'cpu') as String;
+      _settingsBox.get('backend_type', defaultValue: 'auto') as String;
 
   set backendType(String value) => _settingsBox.put('backend_type', value);
+
+  // ── Engine Knobs (ticket 03) ───────────────────────────────
+  // Both apply on the next model load; 0 = platform/auto default.
+
+  /// Context size in tokens; 0 = platform default (Android 1024, else 2048).
+  int get contextSize =>
+      (_settingsBox.get('context_size', defaultValue: 0) as num).toInt();
+
+  set contextSize(int value) => _settingsBox.put('context_size', value);
+
+  /// Inference thread count; 0 = auto (legacy rule: 4 when >4 processors).
+  int get threadCount =>
+      (_settingsBox.get('thread_count', defaultValue: 0) as num).toInt();
+
+  set threadCount(int value) => _settingsBox.put('thread_count', value);
 }

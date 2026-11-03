@@ -10,6 +10,7 @@ import '../services/local_api_server_service.dart';
 import '../services/model_manager.dart';
 import '../services/background_optimizer_service.dart';
 import '../services/chat_storage_service.dart';
+import '../services/memory_probe.dart';
 
 class SettingsScreen extends StatelessWidget {
   /// When true, no Scaffold — just the body content for embedding in tabs.
@@ -770,6 +771,9 @@ class _HardwareSettingsCardState extends State<_HardwareSettingsCard> {
   late String _backend;
   late double _gpuLayers;
   bool _showManual = false;
+  // Ticket 03 knobs (0 = platform/auto default)
+  late int _contextSize;
+  late int _threadCount;
 
   // Auto-detect the best backend and GPU layers for this device
   static Map<String, dynamic> _detectBestConfig() {
@@ -778,7 +782,18 @@ class _HardwareSettingsCardState extends State<_HardwareSettingsCard> {
       return {'backend': 'cpu', 'gpuLayers': 0, 'reason': 'CPU mode — most compatible on desktop'};
     }
 
-    // Android/iOS: detect available RAM and processor count
+    if (Platform.isIOS) {
+      // Ticket 03a: Metal is the iOS GPU path - OpenCL does not exist on
+      // iOS, so the old recommendation could never have engaged a GPU.
+      // GPU layers 0 = auto-fit at load time (ticket 01 headroom probe).
+      return {
+        'backend': 'metal',
+        'gpuLayers': 0,
+        'reason': 'Metal GPU - layers auto-fit to available memory',
+      };
+    }
+
+    // Android: detect available RAM and processor count
     final cores = Platform.numberOfProcessors;
     
     if (cores >= 8) {
@@ -810,6 +825,8 @@ class _HardwareSettingsCardState extends State<_HardwareSettingsCard> {
     super.initState();
     _backend = widget.storage.backendType;
     _gpuLayers = widget.storage.gpuLayers.toDouble();
+    _contextSize = widget.storage.contextSize;
+    _threadCount = widget.storage.threadCount;
   }
 
   void _applyAutoConfig() {
@@ -831,11 +848,12 @@ class _HardwareSettingsCardState extends State<_HardwareSettingsCard> {
   void _saveBackend(String val) {
     setState(() => _backend = val);
     widget.storage.backendType = val;
-    // Auto-set sensible GPU layers when switching
+    // Auto-set sensible GPU layers when switching. Metal/Auto keep 0:
+    // at load time 0 resolves to "offload whatever fits" (ticket 03a).
     if (val == 'cpu') {
       setState(() => _gpuLayers = 0);
       widget.storage.gpuLayers = 0;
-    } else if (_gpuLayers == 0) {
+    } else if (val != 'metal' && val != 'auto' && _gpuLayers == 0) {
       setState(() => _gpuLayers = 33);
       widget.storage.gpuLayers = 33;
     }
@@ -848,6 +866,12 @@ class _HardwareSettingsCardState extends State<_HardwareSettingsCard> {
 
   String get _currentConfigLabel {
     switch (_backend) {
+      case 'metal':
+        return _gpuLayers.toInt() == 0
+            ? 'GPU (Metal) - auto-fit layers'
+            : 'GPU (Metal) - ${_gpuLayers.toInt()} layers';
+      case 'auto':
+        return 'Auto (best available backend)';
       case 'vulkan':
         return 'GPU (Vulkan) • ${_gpuLayers.toInt()} layers';
       case 'opencl':
@@ -958,13 +982,7 @@ class _HardwareSettingsCardState extends State<_HardwareSettingsCard> {
           if (_showManual) ...[
             const SizedBox(height: 12),
             Row(
-              children: [
-                _buildBackendButton('CPU', 'cpu'),
-                const SizedBox(width: 8),
-                _buildBackendButton('Vulkan', 'vulkan'),
-                const SizedBox(width: 8),
-                _buildBackendButton('OpenCL', 'opencl'),
-              ],
+              children: _backendOptions(),
             ),
             const SizedBox(height: 16),
             Row(
@@ -1003,13 +1021,154 @@ class _HardwareSettingsCardState extends State<_HardwareSettingsCard> {
               ),
             ),
             Text(
-              'If the app crashes when loading a model, reduce GPU layers or switch to CPU. Reload the model after changing settings.',
+              'GPU layers 0 with Metal/Auto = offload every layer that fits in memory. If the app crashes when loading a model, reduce GPU layers or switch to CPU. Reload the model after changing settings.',
               style: TextStyle(color: context.textD, fontSize: 11, height: 1.4),
             ),
+            const SizedBox(height: 20),
+            // ── Engine knobs (ticket 03): context + threads ──
+            Row(
+              children: [
+                Icon(Icons.tune_rounded, size: 16, color: AppColors.accent),
+                const SizedBox(width: 8),
+                Text(
+                  'Engine Knobs',
+                  style: TextStyle(color: context.text, fontSize: 14, fontWeight: FontWeight.w600),
+                ),
+              ],
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'Context and threads apply on the next model load.',
+              style: TextStyle(color: context.textD, fontSize: 11),
+            ),
+            const SizedBox(height: 12),
+            Text('Context Size', style: TextStyle(color: context.text, fontSize: 14)),
+            const SizedBox(height: 8),
+            Row(children: _chips(
+              values: const [0, 1024, 2048, 4096, 8192],
+              labels: const ['Default', '1024', '2048', '4096', '8192'],
+              selected: _contextSize,
+              onTap: _onContextSelected,
+            )),
+            const SizedBox(height: 16),
+            Text('Threads', style: TextStyle(color: context.text, fontSize: 14)),
+            const SizedBox(height: 8),
+            Row(children: _chips(
+              values: const [0, 2, 4, 6, 8],
+              labels: const ['Auto', '2', '4', '6', '8'],
+              selected: _threadCount,
+              onTap: (v) {
+                setState(() => _threadCount = v);
+                widget.storage.threadCount = v;
+              },
+            )),
           ],
         ],
       ),
     );
+  }
+
+  // Platform-appropriate backend choices (ticket 03a): Apple platforms
+  // get Auto/Metal/CPU - Vulkan and OpenCL do not exist on iOS.
+  List<Widget> _backendOptions() {
+    final List<List<String>> options = (Platform.isIOS || Platform.isMacOS)
+        ? [
+            ['Auto', 'auto'],
+            ['Metal', 'metal'],
+            ['CPU', 'cpu'],
+          ]
+        : [
+            ['CPU', 'cpu'],
+            ['Vulkan', 'vulkan'],
+            ['OpenCL', 'opencl'],
+          ];
+    final widgets = <Widget>[];
+    for (var i = 0; i < options.length; i++) {
+      if (i > 0) widgets.add(const SizedBox(width: 8));
+      widgets.add(_buildBackendButton(options[i][0], options[i][1]));
+    }
+    return widgets;
+  }
+
+  int get _effectiveContext {
+    if (_contextSize > 0) return _contextSize;
+    return Platform.isAndroid ? 1024 : 2048;
+  }
+
+  // Raising the context grows the KV cache roughly in proportion; per
+  // ticket 03 the consequence - with the live headroom from ticket 01 -
+  // is shown BEFORE the new value is saved.
+  Future<void> _onContextSelected(int val) async {
+    if (val > 0 && val > _effectiveContext) {
+      final headroom = await MemoryProbe.availableLabel();
+      if (!mounted) return;
+      final factor = (val / _effectiveContext).toStringAsFixed(1);
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('Raise context size?'),
+          content: Text(
+            'Context $val grows the KV cache to roughly ${factor}x the '
+            'current size. Memory available right now: $headroom. '
+            'The change applies on the next model load.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Cancel'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('Apply'),
+            ),
+          ],
+        ),
+      );
+      if (confirmed != true) return;
+    }
+    setState(() => _contextSize = val);
+    widget.storage.contextSize = val;
+  }
+
+  // Small selectable chips in the backend-button visual language.
+  List<Widget> _chips({
+    required List<int> values,
+    required List<String> labels,
+    required int selected,
+    required void Function(int) onTap,
+  }) {
+    final widgets = <Widget>[];
+    for (var i = 0; i < values.length; i++) {
+      if (i > 0) widgets.add(const SizedBox(width: 6));
+      final isSel = values[i] == selected;
+      widgets.add(Expanded(
+        child: InkWell(
+          onTap: () => onTap(values[i]),
+          borderRadius: BorderRadius.circular(8),
+          child: Container(
+            padding: const EdgeInsets.symmetric(vertical: 9),
+            decoration: BoxDecoration(
+              color: isSel ? AppColors.accent : context.bgInput,
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(
+                color: isSel ? AppColors.accent : context.border,
+              ),
+            ),
+            child: Center(
+              child: Text(
+                labels[i],
+                style: TextStyle(
+                  color: isSel ? Colors.white : context.text,
+                  fontSize: 11,
+                  fontWeight: isSel ? FontWeight.bold : FontWeight.normal,
+                ),
+              ),
+            ),
+          ),
+        ),
+      ));
+    }
+    return widgets;
   }
 
   Widget _buildBackendButton(String label, String value) {

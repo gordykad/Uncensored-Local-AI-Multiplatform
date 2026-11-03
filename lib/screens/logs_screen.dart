@@ -1,9 +1,13 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:get/get.dart';
 
 import '../theme/app_colors.dart';
+import '../services/llm_service.dart';
 import '../services/log_service.dart';
+import '../services/memory_probe.dart';
 
 class LogsScreen extends StatelessWidget {
   const LogsScreen({super.key});
@@ -80,6 +84,9 @@ class LogsScreen extends StatelessWidget {
               ),
             ),
           ),
+
+          // ── Diagnostics header (ticket 01) ──────────
+          const _DiagnosticsHeader(),
 
           // ── Filter chips ──────────────────────────────
           _FilterBar(),
@@ -311,6 +318,104 @@ class _LogTile extends StatelessWidget {
               ],
             ),
           ),
+        ],
+      ),
+    );
+  }
+}
+
+// ── Diagnostics header (ticket 01) ────────────────────────────
+// Live memory headroom (native os_proc_available_memory on iOS), the
+// last error in plain terms, and the last generation's fixed-meter
+// summary — the three things every fleet measurement depends on.
+class _DiagnosticsHeader extends StatefulWidget {
+  const _DiagnosticsHeader();
+
+  @override
+  State<_DiagnosticsHeader> createState() => _DiagnosticsHeaderState();
+}
+
+class _DiagnosticsHeaderState extends State<_DiagnosticsHeader> {
+  String _headroom = '...';
+  Timer? _timer;
+
+  @override
+  void initState() {
+    super.initState();
+    _refresh();
+    _timer = Timer.periodic(const Duration(seconds: 2), (_) => _refresh());
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _refresh() async {
+    final label = await MemoryProbe.availableLabel();
+    if (mounted) setState(() => _headroom = label);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final logService = Get.find<LogService>();
+    final llm = Get.isRegistered<LlmService>() ? Get.find<LlmService>() : null;
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+      decoration: BoxDecoration(
+        color: context.bgPanel,
+        border: Border(
+          bottom: BorderSide(color: context.border, width: 0.5),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.memory_rounded, size: 14, color: context.textM),
+              const SizedBox(width: 6),
+              Text(
+                'Memory available: $_headroom',
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                  color: context.text,
+                  fontFamily: 'monospace',
+                ),
+              ),
+            ],
+          ),
+          Obx(() {
+            final err = logService.lastError.value;
+            if (err.isEmpty) return const SizedBox.shrink();
+            return Padding(
+              padding: const EdgeInsets.only(top: 6),
+              child: Text(
+                'Last error: $err',
+                style: TextStyle(fontSize: 12, color: AppColors.red),
+              ),
+            );
+          }),
+          if (llm != null)
+            Obx(() {
+              final summary = llm.lastMeterSummary.value;
+              if (summary.isEmpty) return const SizedBox.shrink();
+              return Padding(
+                padding: const EdgeInsets.only(top: 6),
+                child: Text(
+                  'Last generation: $summary',
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: context.textM,
+                    fontFamily: 'monospace',
+                  ),
+                ),
+              );
+            }),
         ],
       ),
     );
