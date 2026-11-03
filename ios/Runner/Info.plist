@@ -68,5 +68,13 @@
 		<string>UIInterfaceOrientationLandscapeLeft</string>
 		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Uncensored Local AI lets you pick images and files from your photo library to attach to chats and import models. Everything stays on your device.</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>Uncensored Local AI lets you save images to your photo library. Everything stays on your device.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>Uncensored Local AI lets you take a photo to attach to a chat. Photos are processed on your device only.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Uncensored Local AI uses the microphone only if you record audio or video to attach to a chat. Audio is processed on your device only.</string>
 </dict>
 </plist>
