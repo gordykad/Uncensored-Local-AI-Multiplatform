@@ -18,6 +18,8 @@ import '../widgets/faithful/widgets.dart';
 import '../widgets/faithful/trace_pickers.dart';
 import '../widgets/faithful/shared.dart';
 import 'model_library_screen.dart';
+import 'image_gen_screen.dart';
+import '../widgets/dock_nav.dart';
 import 'settings_screen.dart';
 
 class HomeScreen extends StatefulWidget {
@@ -39,7 +41,7 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _autoScrollToBottom = true;
   String? _lastRenderedChatId;
 
-  // Mobile bottom nav index: 0=Chat, 1=Models, 2=Settings
+  // Mobile bottom nav index: 0=Chat, 1=Models, 2=Image Gen, 3=Settings
   int _mobileTabIndex = 0;
 
   // Scaffold key for drawer
@@ -364,56 +366,28 @@ class _HomeScreenState extends State<HomeScreen> {
             _buildMobileChatTab(),
             // Tab 1: Models
             const ModelLibraryScreen(embedded: true),
-            // Tab 2: Settings
+            // Tab 2: Image Gen (ticket 28)
+            const ImageGenScreen(embedded: true),
+            // Tab 3: Settings
             const SettingsScreen(embedded: true),
           ],
         ),
       ),
       bottomNavigationBar: Container(
-        decoration: BoxDecoration(
-          color: context.bg,
-          border: Border(top: BorderSide(color: context.border, width: 0.5)),
-        ),
-        child: NavigationBar(
-          selectedIndex: _mobileTabIndex,
-          onDestinationSelected: (i) {
-            // Keyboard fix: switching tabs always drops the keyboard —
-            // the IndexedStack keeps the chat field (and its focus)
-            // alive underneath the other tabs.
-            FocusManager.instance.primaryFocus?.unfocus();
-            setState(() => _mobileTabIndex = i);
-          },
-          backgroundColor: Colors.transparent,
-          elevation: 0,
-          indicatorColor: AppColors.accent.withOpacity(0.15),
-          labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
-          height: 64,
-          destinations: [
-            NavigationDestination(
-              icon: Icon(Icons.chat_outlined, color: context.textM),
-              selectedIcon: const Icon(
-                Icons.chat_rounded,
-                color: AppColors.accent,
-              ),
-              label: 'Chat',
+        color: context.bg,
+        child: SafeArea(
+          top: false,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(12, 8, 12, 10),
+            child: DockNav(
+              selectedIndex: _mobileTabIndex,
+              onSelect: (i) {
+                // Keyboard fix: switching tabs always drops the keyboard.
+                FocusManager.instance.primaryFocus?.unfocus();
+                setState(() => _mobileTabIndex = i);
+              },
             ),
-            NavigationDestination(
-              icon: Icon(Icons.widgets_outlined, color: context.textM),
-              selectedIcon: const Icon(
-                Icons.widgets_rounded,
-                color: AppColors.accent,
-              ),
-              label: 'Models',
-            ),
-            NavigationDestination(
-              icon: Icon(Icons.settings_outlined, color: context.textM),
-              selectedIcon: const Icon(
-                Icons.settings_rounded,
-                color: AppColors.accent,
-              ),
-              label: 'Settings',
-            ),
-          ],
+          ),
         ),
       ),
     );

@@ -45,6 +45,7 @@ Future<void> main() async {
     await Hive.openBox<ChatModel>('chats');
     await Hive.openBox('settings');
     await Hive.openBox('models_meta');
+    await Hive.openBox('imagegen'); // ticket 28 entries + lane keys (device-local)
 
     // Load theme preference
     final themeController = Get.put(ThemeController());

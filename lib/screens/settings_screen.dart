@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 
 import '../theme/app_colors.dart';
+import '../services/image_gen_service.dart';
 import '../widgets/faithful/widgets.dart';
 import '../widgets/faithful/controls_meta.dart';
 import '../widgets/faithful/textfx.dart';
@@ -429,6 +430,36 @@ class _SettingsBody extends StatelessWidget {
                                     },
                             ),
                           ],
+                        ),
+                        const SizedBox(height: 12),
+                        StatefulBuilder(
+                          builder: (context, setRow) {
+                            final svc = ImageGenService();
+                            return Row(
+                              children: [
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        'Connectivity',
+                                        style: TextStyle(color: context.text, fontSize: 14),
+                                      ),
+                                      const SizedBox(height: 2),
+                                      Text(
+                                        'Hosted image lanes + shared config. Local models and the local API are unaffected when off.',
+                                        style: TextStyle(color: context.textD, fontSize: 12),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                MinixSwitch(
+                                  value: svc.connectivityOn,
+                                  onChanged: (v) => setRow(() => svc.connectivityOn = v),
+                                ),
+                              ],
+                            );
+                          },
                         ),
                         if (apiServer.allInterfaces.value)
                           Container(
