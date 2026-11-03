@@ -135,7 +135,7 @@ final class MiniXSampler {
        let list = threadList {
       for i in 0..<Int(threadCount) {
         var info = thread_basic_info()
-        var count = mach_msg_type_number_t(THREAD_BASIC_INFO_COUNT)
+        var count = mach_msg_type_number_t(MemoryLayout<thread_basic_info>.stride / MemoryLayout<integer_t>.stride)
         let kr = withUnsafeMutablePointer(to: &info) { ptr in
           ptr.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
             thread_info(list[i], thread_flavor_t(THREAD_BASIC_INFO), $0, &count)
@@ -309,25 +309,25 @@ final class MiniXDownloads: NSObject, URLSessionDownloadDelegate, UNUserNotifica
   func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask,
                   didFinishDownloadingTo location: URL) {
     let meta = filename(for: downloadTask).flatMap { allMeta()[$0] }
-    let filename: String
+    let fname: String
     let destDir: String
     let name: String
     if let fn = filename(for: downloadTask), let m = meta,
        let dd = m["destDir"] as? String, let nm = m["name"] as? String {
-      filename = fn
+      fname = fn
       destDir = dd
       name = nm
     } else if let urlName = downloadTask.originalRequest?.url?.lastPathComponent,
               urlName.hasSuffix(".gguf"),
               let dd = defaults.string(forKey: "minix.dl.lastDestDir") {
       // Relaunch fallback: identify the transfer by its request URL.
-      filename = urlName
+      fname = urlName
       destDir = dd
       name = urlName
     } else {
       return
     }
-    let dest = URL(fileURLWithPath: destDir).appendingPathComponent(filename)
+    let dest = URL(fileURLWithPath: destDir).appendingPathComponent(fname)
     var failure: String?
     do {
       if FileManager.default.fileExists(atPath: dest.path) {
@@ -337,12 +337,12 @@ final class MiniXDownloads: NSObject, URLSessionDownloadDelegate, UNUserNotifica
     } catch {
       failure = error.localizedDescription
     }
-    tasks.removeValue(forKey: filename)
+    tasks.removeValue(forKey: fname)
     if let failure = failure {
-      setStatus(filename, ["status": "failed", "received": 0, "total": 0, "error": failure])
+      setStatus(fname, ["status": "failed", "received": 0, "total": 0, "error": failure])
     } else {
       let size = (try? FileManager.default.attributesOfItem(atPath: dest.path)[.size] as? NSNumber)?.intValue ?? 0
-      setStatus(filename, ["status": "completed", "received": size, "total": size])
+      setStatus(fname, ["status": "completed", "received": size, "total": size])
       postCompletionNotification(name: name)
     }
   }
