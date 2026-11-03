@@ -3,9 +3,13 @@ import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 
 import '../theme/app_colors.dart';
-import '../widgets/minix_canvas_fx.dart';
-import '../widgets/minix_controls.dart';
-import '../widgets/minix_text_fx.dart';
+import '../widgets/faithful/widgets.dart';
+import '../widgets/faithful/controls_meta.dart';
+import '../widgets/faithful/textfx.dart';
+import '../widgets/faithful/glitch.dart';
+import '../widgets/faithful/particle.dart';
+import '../widgets/faithful/gravity.dart';
+import '../widgets/faithful/shared.dart';
 import '../controllers/chat_controller.dart';
 import '../controllers/model_controller.dart';
 import '../services/local_api_server_service.dart';
@@ -696,9 +700,26 @@ class _SettingsBody extends StatelessWidget {
               Center(
                 child: Column(
                   children: [
-                    const PairedGlitchText(a: 'ASTRO MINIX', b: 'BLACK BOX'),
+                    TextGlitch(
+                      text: 'ASTRO MINIX',
+                      hoverText: 'BLACK BOX',
+                      style: TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w600,
+                        color: context.text,
+                      ),
+                    ),
                     const SizedBox(height: 7),
-                    const GlitchText(text: 'UNCENSORED'),
+                    GlitchText(
+                      text: 'UNCENSORED',
+                      intensity: GlitchIntensity.medium,
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w700,
+                        letterSpacing: 0.5,
+                        color: context.text,
+                      ),
+                    ),
                     const SizedBox(height: 9),
                     SignalReveal(
                       text: 'NOTHING LEAVES THIS PHONE.',
@@ -711,7 +732,7 @@ class _SettingsBody extends StatelessWidget {
                     ),
                     const SizedBox(height: 10),
                     Text(
-                      'Astro MiniX 1.4.0 \u00b7 Powered by llamadart + llama.cpp',
+                      'Astro MiniX 1.4.1 \u00b7 Powered by llamadart + llama.cpp',
                       style: TextStyle(fontSize: 11, color: context.textD),
                     ),
                   ],
@@ -1031,9 +1052,9 @@ class _HardwareSettingsCardState extends State<_HardwareSettingsCard> {
             const SizedBox(height: 12),
             MinixSegmented(
               options: _backendOptionLabels(),
-              selectedIndex:
+              index:
                   _backendOptionValues().indexOf(_backend).clamp(0, 2),
-              onSelect: (i) => _saveBackend(_backendOptionValues()[i]),
+              onChanged: (i) => _saveBackend(_backendOptionValues()[i]),
             ),
             const SizedBox(height: 16),
             Row(
@@ -1097,9 +1118,9 @@ class _HardwareSettingsCardState extends State<_HardwareSettingsCard> {
             const SizedBox(height: 8),
             MinixSegmented(
               options: const ['Default', '1024', '2048', '4096', '8192'],
-              selectedIndex:
+              index:
                   const [0, 1024, 2048, 4096, 8192].indexOf(_contextSize).clamp(0, 4),
-              onSelect: (i) =>
+              onChanged: (i) =>
                   _onContextSelected(const [0, 1024, 2048, 4096, 8192][i]),
             ),
             const SizedBox(height: 16),
@@ -1107,9 +1128,9 @@ class _HardwareSettingsCardState extends State<_HardwareSettingsCard> {
             const SizedBox(height: 8),
             MinixSegmented(
               options: const ['Auto', '2', '4', '6', '8'],
-              selectedIndex:
+              index:
                   const [0, 2, 4, 6, 8].indexOf(_threadCount).clamp(0, 4),
-              onSelect: (i) {
+              onChanged: (i) {
                 const values = [0, 2, 4, 6, 8];
                 setState(() => _threadCount = values[i]);
                 widget.storage.threadCount = values[i];

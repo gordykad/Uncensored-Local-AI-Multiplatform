@@ -3,7 +3,8 @@ import 'package:get/get.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 
 import '../theme/app_colors.dart';
-import '../widgets/minix_text_fx.dart';
+import '../widgets/faithful/textfx.dart';
+import '../widgets/faithful/shared.dart';
 import '../services/llm_service.dart';
 import '../services/model_manager.dart';
 import '../services/chat_storage_service.dart';

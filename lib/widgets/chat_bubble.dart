@@ -6,9 +6,9 @@ import 'package:get/get.dart';
 import '../theme/app_colors.dart';
 import '../models/message_model.dart';
 import '../services/llm_service.dart';
-import 'minix_canvas_fx.dart';
-import 'minix_controls.dart';
-import 'minix_text_fx.dart';
+import 'faithful/orb.dart';
+import 'faithful/stream.dart';
+import 'faithful/widgets.dart';
 
 class ChatBubble extends StatelessWidget {
   final MessageModel message;
@@ -98,25 +98,36 @@ class ChatBubble extends StatelessWidget {
     // #2 progressive style when regenerating). Prefill = orb + shimmer.
     if (isStreaming) {
       if (message.content.isEmpty) {
-        return const Padding(
-          padding: EdgeInsets.only(top: 3),
-          child: Row(
+        return Padding(
+          padding: const EdgeInsets.only(top: 3),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              ThinkingOrb(size: 30, thinking: true),
-              SizedBox(width: 10),
-              ShimmerText(text: 'Generating'),
+              const ThinkingOrb(size: 120, thinking: true),
+              const SizedBox(height: 6),
+              TextShimmerWave(
+                text: 'Generating',
+                style: TextStyle(fontSize: 14, color: context.textM),
+              ),
             ],
           ),
         );
       }
       return Padding(
         padding: const EdgeInsets.only(top: 3),
-        child: StreamReplyText(
-          text: message.content,
-          streaming: true,
-          regenerating: isRegenerating,
-          style: TextStyle(fontSize: 15, height: 1.6, color: context.text),
-        ),
+        child: isRegenerating
+            ? RegenRevealText(
+                text: message.content,
+                style:
+                    TextStyle(fontSize: 15, height: 1.6, color: context.text),
+              )
+            : StreamReplyText(
+                text: message.content,
+                streaming: true,
+                caretColor: AppColors.accent,
+                style:
+                    TextStyle(fontSize: 15, height: 1.6, color: context.text),
+              ),
       );
     }
 
@@ -232,11 +243,14 @@ class ChatBubble extends StatelessWidget {
                       children: [
                         Icon(Icons.speed_rounded, size: 14, color: context.textD),
                         const SizedBox(width: 4),
-                        AnimatedCounter(
+                        SpringNumber(
                           value: speed,
-                          format: (v) => '${v.toStringAsFixed(1)} t/s',
+                          decimals: 1,
                           style: TextStyle(fontSize: 12, color: context.textD),
                         ),
+                        Text(' t/s',
+                            style:
+                                TextStyle(fontSize: 12, color: context.textD)),
                       ],
                     );
                   }),

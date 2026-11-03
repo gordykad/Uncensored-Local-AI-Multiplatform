@@ -7,9 +7,10 @@ import '../controllers/model_controller.dart';
 import '../services/model_manager.dart';
 import '../models/ai_model_info.dart';
 import '../widgets/model_card.dart';
-import '../widgets/minix_canvas_fx.dart';
-import '../widgets/minix_controls.dart';
-import '../widgets/minix_text_fx.dart';
+import '../widgets/faithful/gravity.dart';
+import '../widgets/faithful/trace_pickers.dart';
+import '../widgets/faithful/controls_meta.dart';
+import '../widgets/faithful/textfx.dart';
 
 class ModelLibraryScreen extends StatelessWidget {
   final bool embedded;
@@ -98,6 +99,7 @@ class _ModelLibraryBodyState extends State<_ModelLibraryBody> {
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
           child: SearchInputGroup(
+            label: 'Models',
             controller: _searchCtrl,
             hint: 'Search models',
             onChanged: (q) => setState(() => _query = q.trim()),
@@ -169,7 +171,10 @@ class _ModelLibraryBodyState extends State<_ModelLibraryBody> {
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    const SkeletonThread(groups: 2),
+                    const Padding(
+                      padding: EdgeInsets.symmetric(horizontal: 24),
+                      child: ChatThreadSkeleton(),
+                    ),
                     const SizedBox(height: 16),
                     Text(
                       'No models in catalog.',
@@ -185,7 +190,7 @@ class _ModelLibraryBodyState extends State<_ModelLibraryBody> {
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    const KineticGrid(height: 140),
+                    const GravityStars(height: 150),
                     const SizedBox(height: 12),
                     Text(
                       'No models match this filter.',

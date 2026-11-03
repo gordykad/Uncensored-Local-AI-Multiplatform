@@ -2,7 +2,7 @@ import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
-import '../widgets/minix_controls.dart';
+import '../widgets/faithful/approval.dart';
 import 'package:file_picker/file_picker.dart';
 
 import '../models/ai_model_info.dart';

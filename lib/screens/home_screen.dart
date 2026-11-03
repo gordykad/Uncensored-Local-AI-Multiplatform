@@ -8,9 +8,14 @@ import '../controllers/theme_controller.dart';
 import '../services/llm_service.dart';
 import '../widgets/chat_sidebar.dart';
 import '../widgets/chat_bubble.dart';
-import '../widgets/minix_canvas_fx.dart';
-import '../widgets/minix_controls.dart';
-import '../widgets/minix_text_fx.dart';
+import '../widgets/faithful/orb.dart';
+import '../widgets/faithful/kinetic.dart';
+import '../widgets/faithful/textfx.dart';
+import '../widgets/faithful/stream.dart';
+import '../widgets/faithful/nexus_velocity.dart';
+import '../widgets/faithful/widgets.dart';
+import '../widgets/faithful/trace_pickers.dart';
+import '../widgets/faithful/shared.dart';
 import 'model_library_screen.dart';
 import 'settings_screen.dart';
 
@@ -43,6 +48,9 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void initState() {
     super.initState();
+    _msgController.addListener(() {
+      if (mounted) setState(() {});
+    });
     _scrollController.addListener(_handleChatScroll);
   }
 
@@ -204,14 +212,13 @@ class _HomeScreenState extends State<HomeScreen> {
                   ),
                   const SizedBox(height: 8),
 
-                  // Status message
-                  Text(
-                    msg.isNotEmpty ? msg : 'Importing file...',
+                  // Status message — #14 scramble-resolves on change
+                  ScrambleText(
+                    text: msg.isNotEmpty ? msg : 'Importing file...',
                     style: TextStyle(
                       fontSize: 12,
                       color: context.textM,
                     ),
-                    textAlign: TextAlign.center,
                   ),
                   const SizedBox(height: 12),
                   
@@ -423,20 +430,13 @@ class _HomeScreenState extends State<HomeScreen> {
               children: [
                 Row(
                   children: [
-                    const SizedBox(
-                      width: 14,
-                      height: 14,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                        valueColor: AlwaysStoppedAnimation(AppColors.orange),
-                      ),
-                    ),
+                    // #19 AiLoader ring = the load-flow visual
+                    const AiLoader(text: '', size: 30),
                     const SizedBox(width: 10),
                     Expanded(
-                      child: Text(
-                        msg.isNotEmpty ? msg : 'Loading model...',
+                      child: ScrambleText(
+                        text: msg.isNotEmpty ? msg : 'Loading model...',
                         style: TextStyle(fontSize: 12, color: context.text),
-                        overflow: TextOverflow.ellipsis,
                       ),
                     ),
                     Container(
@@ -531,7 +531,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       Flexible(
                         child: VelocityText(
                           text: label,
-                          scrollController: _scrollController,
+                          scroll: _scrollController,
                           style: TextStyle(
                             fontSize: 14,
                             fontWeight: loaded
@@ -573,204 +573,39 @@ class _HomeScreenState extends State<HomeScreen> {
       return;
     }
 
+    // #5 Model Picker (faithful port): source rail + searchable list.
+    final nameByFilename = <String, String>{};
+    final entries = <PickerEntry>[];
+    for (final filename in downloaded) {
+      final info = _modelCtrl.getModelInfo(filename);
+      final name = info?.name ?? filename;
+      nameByFilename[name] = filename;
+      final meta = info == null
+          ? filename
+          : '${info.sizeGb} GB \u00b7 Min ${info.minRamGb} GB RAM \u00b7 '
+              '${info.minRamGb > 6 ? 'TOO BIG' : info.sizeGb > 4 ? 'STREAMS' : 'FITS'}';
+      entries.add(PickerEntry('On device', name, meta));
+    }
+    final selectedInfo = _modelCtrl.selectedModelFilename.value != null
+        ? _modelCtrl.getModelInfo(_modelCtrl.selectedModelFilename.value!)
+        : null;
+
     showModalBottomSheet(
       context: context,
-      backgroundColor: context.bg,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
-      ),
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
       builder: (_) => SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 12),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              // Drag handle
-              Container(
-                width: 36,
-                height: 4,
-                margin: const EdgeInsets.only(bottom: 12),
-                decoration: BoxDecoration(
-                  color: context.textD,
-                  borderRadius: BorderRadius.circular(2),
-                ),
-              ),
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16),
-                child: Row(
-                  children: [
-                    Text(
-                      'Select Model',
-                      style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w600,
-                        color: context.text,
-                      ),
-                    ),
-                    const Spacer(),
-                    // Unload button if model is loaded
-                    Obx(() {
-                      if (_llm.isLoaded.value) {
-                        return TextButton.icon(
-                          onPressed: () {
-                            _modelCtrl.unloadCurrentModel();
-                            Navigator.pop(context);
-                          },
-                          icon: const Icon(
-                            Icons.eject_rounded,
-                            size: 16,
-                            color: AppColors.orange,
-                          ),
-                          label: const Text(
-                            'Unload',
-                            style: TextStyle(
-                              fontSize: 13,
-                              color: AppColors.orange,
-                            ),
-                          ),
-                        );
-                      }
-                      return const SizedBox.shrink();
-                    }),
-                    TextButton(
-                      onPressed: () {
-                        Navigator.pop(context);
-                        setState(() => _mobileTabIndex = 1);
-                      },
-                      child: const Text(
-                        'Browse All',
-                        style: TextStyle(fontSize: 13, color: AppColors.accent),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 4),
-              // Model list
-              ...downloaded.map((filename) {
-                final info = _modelCtrl.getModelInfo(filename);
-                final isActive =
-                    _modelCtrl.selectedModelFilename.value == filename &&
-                    _llm.isLoaded.value;
-                final isLoading =
-                    _modelCtrl.loadingModelFilename.value == filename;
-                return ListTile(
-                  dense: true,
-                  leading: Container(
-                    width: 32,
-                    height: 32,
-                    decoration: BoxDecoration(
-                      color: isActive
-                          ? AppColors.green.withOpacity(0.15)
-                          : isLoading
-                          ? AppColors.orange.withOpacity(0.15)
-                          : context.bgHover,
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: isLoading
-                        ? const Padding(
-                            padding: EdgeInsets.all(8),
-                            child: CircularProgressIndicator(
-                              strokeWidth: 2,
-                              color: AppColors.orange,
-                            ),
-                          )
-                        : Icon(
-                            isActive
-                                ? Icons.check_rounded
-                                : Icons.smart_toy_outlined,
-                            size: 16,
-                            color: isActive ? AppColors.green : context.textM,
-                          ),
-                  ),
-                  title: Text(
-                    info?.name ?? filename,
-                    style: TextStyle(
-                      fontSize: 14,
-                      fontWeight: isActive ? FontWeight.w600 : FontWeight.w400,
-                      color: context.text,
-                    ),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  ),
-                  subtitle: info != null
-                      ? Text(
-                          '${info.sizeGb} GB • Min ${info.minRamGb} GB RAM',
-                          style: TextStyle(
-                            fontSize: 11,
-                            color: context.textD,
-                            fontFamily: 'monospace',
-                          ),
-                        )
-                      : null,
-                  trailing: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      if (info != null) ...[
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 6,
-                            vertical: 2,
-                          ),
-                          decoration: BoxDecoration(
-                            color: (info.minRamGb > 6
-                                    ? AppColors.red
-                                    : info.sizeGb > 4
-                                        ? AppColors.orange
-                                        : AppColors.accentHi)
-                                .withValues(alpha: 0.15),
-                            borderRadius: BorderRadius.circular(5),
-                          ),
-                          child: Text(
-                            info.minRamGb > 6
-                                ? 'TOO BIG'
-                                : info.sizeGb > 4
-                                    ? 'STREAMS'
-                                    : 'FITS',
-                            style: TextStyle(
-                              fontSize: 9.5,
-                              fontWeight: FontWeight.w700,
-                              color: info.minRamGb > 6
-                                  ? AppColors.red
-                                  : info.sizeGb > 4
-                                      ? AppColors.orange
-                                      : AppColors.accentHi,
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                      ],
-                      if (isActive)
-                        const Text(
-                          'Active',
-                          style: TextStyle(
-                            fontSize: 11,
-                            color: AppColors.green,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        )
-                      else if (isLoading)
-                        const Text(
-                          'Loading...',
-                          style: TextStyle(
-                            fontSize: 11,
-                            color: AppColors.orange,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                    ],
-                  ),
-                  onTap: () {
-                    Navigator.pop(context);
-                    if (!isActive && !isLoading) {
-                      _modelCtrl.loadModel(filename);
-                    }
-                  },
-                );
-              }),
-              const SizedBox(height: 8),
-            ],
-          ),
+        child: ModelPickerSheet(
+          entries: entries,
+          selectedName: selectedInfo?.name,
+          onPick: (entry) {
+            final filename = nameByFilename[entry.name];
+            Navigator.pop(context);
+            if (filename != null &&
+                _modelCtrl.selectedModelFilename.value != filename) {
+              _modelCtrl.loadModel(filename);
+            }
+          },
         ),
       ),
     );
@@ -950,10 +785,17 @@ class _HomeScreenState extends State<HomeScreen> {
                 ],
                 if (_llm.isGenerating.value) ...[
                   const SizedBox(width: 12),
-                  AnimatedCounter(
-                    value: _llm.tokensPerSecond.value,
-                    format: (v) => '${v.toStringAsFixed(1)} t/s',
-                    style: TextStyle(fontSize: 12, color: context.textM),
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      SpringNumber(
+                        value: _llm.tokensPerSecond.value,
+                        decimals: 1,
+                        style: TextStyle(fontSize: 12, color: context.textM),
+                      ),
+                      Text(' t/s',
+                          style: TextStyle(fontSize: 12, color: context.textM)),
+                    ],
                   ),
                 ],
               ],
@@ -1024,59 +866,49 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _buildWelcome() {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(32),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const KineticGrid(height: 150),
-            const SizedBox(height: 20),
-            Container(
-              width: 56,
-              height: 56,
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(16),
-                boxShadow: [
-                  BoxShadow(
-                    color: AppColors.accent.withValues(alpha: 0.35),
-                    blurRadius: 24,
-                    spreadRadius: 2,
+    // Re-port (Kai, 2026-11-03): KineticGrid is the FULL-BLEED background,
+    // the orb is the centerpiece hero, the app icon does NOT appear here.
+    return Stack(
+      children: [
+        const Positioned.fill(child: KineticGrid()),
+        Center(
+          child: Padding(
+            padding: const EdgeInsets.all(32),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Obx(
+                  () => ThinkingOrb(
+                    size: 190,
+                    thinking: _chatCtrl.isGenerating.value,
                   ),
-                ],
-              ),
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(16),
-                child: Image.asset(
-                  'assets/icon/minix-icon.png',
-                  fit: BoxFit.cover,
                 ),
-              ),
+                const SizedBox(height: 26),
+                BlurReveal(
+                  text: 'How can I help you?',
+                  style: TextStyle(
+                    fontSize: 22,
+                    fontWeight: FontWeight.w600,
+                    color: context.text,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Obx(
+                  () => Text(
+                    _llm.isLoaded.value
+                        ? 'Type a message below to get started.'
+                        : 'Select a model first to begin chatting.',
+                    style: TextStyle(fontSize: 14, color: context.textM),
+                    textAlign: TextAlign.center,
+                  ),
+                ),
+                const SizedBox(height: 22),
+                const RedactionBars(widths: [110, 76, 128, 58], barHeight: 9),
+              ],
             ),
-            const SizedBox(height: 24),
-            SignalReveal(
-              text: 'How can I help you?',
-              style: TextStyle(
-                fontSize: 22,
-                fontWeight: FontWeight.w600,
-                color: context.text,
-              ),
-            ),
-            const SizedBox(height: 8),
-            Obx(
-              () => Text(
-                _llm.isLoaded.value
-                    ? 'Type a message below to get started.'
-                    : 'Select a model first to begin chatting.',
-                style: TextStyle(fontSize: 14, color: context.textM),
-                textAlign: TextAlign.center,
-              ),
-            ),
-            const SizedBox(height: 22),
-            const RedactionBars(widths: [110, 76, 128, 58], barHeight: 9),
-          ],
+          ),
         ),
-      ),
+      ],
     );
   }
 
@@ -1101,38 +933,57 @@ class _HomeScreenState extends State<HomeScreen> {
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.end,
           children: [
-            // Thinking Orb — the composer itself (ticket 08; faithful
-            // port, monochrome, zero changes per founder ruling)
+            // Thinking Orb — the composer itself (faithful port, zero
+            // changes per founder ruling; 52px per Kai's re-port order)
             Padding(
-              padding: const EdgeInsets.only(left: 10, bottom: 5),
+              padding: const EdgeInsets.only(left: 8, bottom: 2),
               child: Obx(
                 () => ThinkingOrb(
-                  size: 38,
+                  size: 52,
                   thinking: _chatCtrl.isGenerating.value,
                 ),
               ),
             ),
-            // Text field
+            // Text field — #24 rotating placeholder while empty
             Expanded(
-              child: TextField(
-                controller: _msgController,
-                maxLines: 5,
-                minLines: 1,
-                textInputAction: TextInputAction.newline,
-                style: TextStyle(
-                  fontSize: 15,
-                  color: context.text,
-                  height: 1.4,
-                ),
-                decoration: InputDecoration(
-                  hintText: 'Ask anything...',
-                  hintStyle: TextStyle(color: context.textD),
-                  border: InputBorder.none,
-                  enabledBorder: InputBorder.none,
-                  focusedBorder: InputBorder.none,
-                  contentPadding: const EdgeInsets.fromLTRB(24, 14, 8, 14),
-                ),
-                onSubmitted: (_) => _send(),
+              child: Stack(
+                alignment: Alignment.centerLeft,
+                children: [
+                  if (_msgController.text.isEmpty)
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(14, 0, 8, 0),
+                      child: IgnorePointer(
+                        child: RotatingPlaceholder(
+                          placeholders: const [
+                            'Ask anything...',
+                            'Write a haiku about the ocean at midnight',
+                            'Explain it like I am five',
+                            'Draft it for me...',
+                            'What should I build next?',
+                          ],
+                          style: TextStyle(color: context.textD, fontSize: 15),
+                        ),
+                      ),
+                    ),
+                  TextField(
+                    controller: _msgController,
+                    maxLines: 5,
+                    minLines: 1,
+                    textInputAction: TextInputAction.newline,
+                    style: TextStyle(
+                      fontSize: 15,
+                      color: context.text,
+                      height: 1.4,
+                    ),
+                    decoration: const InputDecoration(
+                      border: InputBorder.none,
+                      enabledBorder: InputBorder.none,
+                      focusedBorder: InputBorder.none,
+                      contentPadding: EdgeInsets.fromLTRB(14, 14, 8, 14),
+                    ),
+                    onSubmitted: (_) => _send(),
+                  ),
+                ],
               ),
             ),
 
@@ -1162,9 +1013,11 @@ class _HomeScreenState extends State<HomeScreen> {
         if (_dissolvingText != null)
           Positioned.fill(
             child: Padding(
-              padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
-              child: NexusDisintegrate(
+              padding: const EdgeInsets.fromLTRB(86, 22, 16, 16),
+              child: DisintegratingText(
                 text: _dissolvingText!,
+                color: context.text,
+                fontSize: 15,
                 onDone: () {
                   if (mounted) setState(() => _dissolvingText = null);
                 },

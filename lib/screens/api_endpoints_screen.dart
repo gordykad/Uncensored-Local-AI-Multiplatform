@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:http/http.dart' as http;
 import '../theme/app_colors.dart';
-import '../widgets/minix_canvas_fx.dart';
+import '../widgets/faithful/sonar.dart';
 import '../services/local_api_server_service.dart';
 
 class ApiEndpointsScreen extends StatefulWidget {

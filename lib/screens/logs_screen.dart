@@ -9,8 +9,9 @@ import '../services/llm_service.dart';
 import '../services/log_service.dart';
 import '../services/memory_probe.dart';
 import '../controllers/model_controller.dart';
-import '../widgets/minix_controls.dart';
-import '../widgets/minix_text_fx.dart';
+import '../widgets/faithful/stats.dart';
+import '../widgets/faithful/trace_pickers.dart';
+import '../widgets/faithful/textfx.dart';
 
 class LogsScreen extends StatelessWidget {
   const LogsScreen({super.key});
@@ -487,31 +488,42 @@ class _EnginePanel extends StatelessWidget {
                 : '\u2014',
           ),
         ];
-        final events = <({String label, bool done, bool active})>[
-          (label: 'model loaded', done: loaded, active: loading),
-          (label: 'context ready', done: loaded && !loading, active: false),
-          (
-            label: 'first token',
-            done: llm.lastTtftMs.value > 0,
-            active: generating && llm.lastTtftMs.value == 0,
-          ),
-          (
-            label: 'streaming',
-            done: !generating && llm.lastGenerationTokens.value > 0,
-            active: generating,
-          ),
-          (
-            label: 'done',
-            done: !generating && llm.lastGenerationTokens.value > 0,
-            active: false,
-          ),
+        // #8 Agent Trace fed by the real METER numbers (ticket 01):
+        // prefill span = TTFT, decode span = tokens / decode rate.
+        final ttft = llm.lastTtftMs.value.toDouble();
+        final decodeMs = (llm.lastDecodeTps.value > 0 &&
+                llm.lastGenerationTokens.value > 0)
+            ? llm.lastGenerationTokens.value / llm.lastDecodeTps.value * 1000
+            : 0.0;
+        final spans = <TraceSpan>[
+          if (ttft > 0)
+            TraceSpan(label: 'Prefill', startMs: 0, durMs: ttft),
+          if (ttft > 0 && decodeMs > 0)
+            TraceSpan(
+              label: 'Decode',
+              startMs: ttft,
+              durMs: decodeMs,
+              tokens: llm.lastGenerationTokens.value,
+            ),
+          if (ttft == 0)
+            const TraceSpan(label: 'No run yet', startMs: 0, durMs: 1),
         ];
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            StatsCard(title: 'Engine', rows: rows),
+            Wrap(
+              spacing: 10,
+              runSpacing: 10,
+              children: [
+                for (final r in rows)
+                  SizedBox(
+                    width: 168,
+                    child: MinixStatsCard(label: r.label, value: r.value),
+                  ),
+              ],
+            ),
             const SizedBox(height: 12),
-            AgentTrace(events: events),
+            AgentTraceView(spans: spans, autoPlay: ttft > 0),
           ],
         );
       }),
