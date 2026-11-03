@@ -63,7 +63,7 @@ class ScrambleText extends StatefulWidget {
 }
 
 class _ScrambleTextState extends State<ScrambleText> {
-  static const _glyphs = 'ABCDEFHIJKLMNOPQRSTUVWXYZ0123456789#%&@$';
+  static const _glyphs = 'ABCDEFHIJKLMNOPQRSTUVWXYZ0123456789#%&\$@';
   final _rng = Random();
   Timer? _timer;
   String _shown = '';
@@ -411,7 +411,7 @@ class PairedGlitchText extends StatefulWidget {
 }
 
 class _PairedGlitchTextState extends State<PairedGlitchText> {
-  static const _glyphs = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789#%&@$';
+  static const _glyphs = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789#%&\$@';
   final _rng = Random();
   Timer? _timer;
   bool _onB = false;

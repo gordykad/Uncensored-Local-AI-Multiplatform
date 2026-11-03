@@ -8,7 +8,7 @@ import '../theme/app_colors.dart';
 import '../services/llm_service.dart';
 import '../services/log_service.dart';
 import '../services/memory_probe.dart';
-import '../services/model_manager.dart';
+import '../controllers/model_controller.dart';
 import '../widgets/minix_controls.dart';
 import '../widgets/minix_text_fx.dart';
 
@@ -439,8 +439,9 @@ class _EnginePanel extends StatelessWidget {
   Widget build(BuildContext context) {
     final llm = Get.isRegistered<LlmService>() ? Get.find<LlmService>() : null;
     if (llm == null) return const SizedBox.shrink();
-    final models =
-        Get.isRegistered<ModelManager>() ? Get.find<ModelManager>() : null;
+    final models = Get.isRegistered<ModelController>()
+        ? Get.find<ModelController>()
+        : null;
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.fromLTRB(12, 10, 12, 6),
@@ -456,7 +457,7 @@ class _EnginePanel extends StatelessWidget {
         final loading = llm.isLoadingModel.value;
         final onDisk = models == null
             ? 0
-            : models.allModels
+            : models.catalog
                 .where((m) => models.downloadedModels.contains(m.filename))
                 .length;
         final rows = <({String label, String value})>[
