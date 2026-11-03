@@ -114,6 +114,56 @@ class _ApiEndpointsScreenState extends State<ApiEndpointsScreen> {
             ),
             const SizedBox(height: 24),
 
+            // Astro Remote Control (ticket 21): admin token card
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: context.bgPanel,
+                border: Border.all(color: context.border),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Astro Remote Control',
+                    style: TextStyle(
+                      color: context.text,
+                      fontSize: 15,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    'Admin API under /admin/* (status, logs, models, remote load, settings). Every call needs this token in the X-Admin-Token header. It never leaves your own network.',
+                    style: TextStyle(color: context.textM, fontSize: 12, height: 1.5),
+                  ),
+                  const SizedBox(height: 10),
+                  SelectableText(
+                    apiServer.adminToken,
+                    style: const TextStyle(
+                      fontFamily: 'monospace',
+                      fontSize: 13,
+                      color: AppColors.accentHi,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: TextButton(
+                      onPressed: () {
+                        setState(() {
+                          apiServer.regenerateAdminToken();
+                        });
+                      },
+                      child: const Text('Regenerate token'),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 24),
+
             Text(
               'How to Access',
               style: TextStyle(color: context.text, fontSize: 18, fontWeight: FontWeight.bold),

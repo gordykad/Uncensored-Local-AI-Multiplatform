@@ -96,6 +96,15 @@ class ChatStorageService extends GetxService {
   set localApiAllInterfaces(bool value) =>
       _settingsBox.put('local_api_all_interfaces', value);
 
+  // ── Astro Remote Control (ticket 21) ───────────────────────
+  /// Per-install admin token for the /admin/* API surface. Empty until
+  /// the API service generates one on first use. Shown in the API screen
+  /// so Kai can hand it to Astro once; regenerating invalidates the old.
+  String get adminToken =>
+      _settingsBox.get('admin_token', defaultValue: '') as String;
+
+  set adminToken(String value) => _settingsBox.put('admin_token', value);
+
   // ── Hardware Settings ──────────────────────────────────────
 
   int get gpuLayers =>

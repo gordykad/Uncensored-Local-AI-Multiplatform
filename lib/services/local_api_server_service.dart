@@ -1,12 +1,16 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math';
 
 import 'package:get/get.dart';
 import 'package:llamadart/llamadart.dart';
 
+import '../controllers/model_controller.dart';
 import 'chat_storage_service.dart';
 import 'llm_service.dart';
+import 'log_service.dart';
+import 'memory_probe.dart';
 import 'wakelock_service.dart';
 
 class LocalApiServerService extends GetxService {
@@ -175,6 +179,11 @@ class LocalApiServerService extends GetxService {
 
       if (request.method == 'POST' && path == '/v1/chat/completions') {
         await _handleChatCompletions(request);
+        return;
+      }
+
+      if (path.startsWith('/admin/')) {
+        await _handleAdmin(request, path);
         return;
       }
 
@@ -572,13 +581,289 @@ class LocalApiServerService extends GetxService {
     }, statusCode: statusCode);
   }
 
+
+  // ── Astro Remote Control (ticket 21) ───────────────────────
+  // Token-gated admin surface on the same server. The app only ever
+  // LISTENS (offline law); every /admin route requires the per-install
+  // token, on loopback too. The token is generated on first use and
+  // shown in the API screen; regenerating invalidates the old one.
+
+  static const appVersion = '1.6.0';
+
+  String get adminToken {
+    var token = _storage.adminToken;
+    if (token.isEmpty) {
+      token = _generateAdminToken();
+      _storage.adminToken = token;
+    }
+    return token;
+  }
+
+  String regenerateAdminToken() {
+    final token = _generateAdminToken();
+    _storage.adminToken = token;
+    return token;
+  }
+
+  String _generateAdminToken() {
+    final rng = Random.secure();
+    return List.generate(
+      32,
+      (_) => rng.nextInt(16).toRadixString(16),
+    ).join();
+  }
+
+  bool _adminAuthorized(HttpRequest request) {
+    final expected = adminToken;
+    final header = request.headers.value('x-admin-token');
+    if (header != null && header == expected) return true;
+    final auth = request.headers.value(HttpHeaders.authorizationHeader);
+    if (auth != null && auth == 'Bearer $expected') return true;
+    return false;
+  }
+
+  Future<void> _handleAdmin(HttpRequest request, String path) async {
+    if (!_adminAuthorized(request)) {
+      await _writeError(
+        request.response,
+        HttpStatus.unauthorized,
+        'Missing or invalid admin token.',
+        type: 'authentication_error',
+        code: 'invalid_admin_token',
+      );
+      return;
+    }
+    final method = request.method;
+    if (method == 'GET' && path == '/admin/status') {
+      await _writeJson(request.response, await _adminStatus());
+      return;
+    }
+    if (method == 'GET' && path == '/admin/logs') {
+      await _writeJson(request.response, await _adminLogs(request));
+      return;
+    }
+    if (method == 'GET' && path == '/admin/models') {
+      await _writeJson(request.response, await _adminModels());
+      return;
+    }
+    if (method == 'POST' && path == '/admin/load') {
+      await _adminLoad(request);
+      return;
+    }
+    if (method == 'POST' && path == '/admin/unload') {
+      await Get.find<ModelController>().unloadModel();
+      await _writeJson(request.response, await _adminStatus());
+      return;
+    }
+    if (method == 'GET' && path == '/admin/settings') {
+      await _writeJson(request.response, _adminSettings());
+      return;
+    }
+    if (method == 'PUT' && path == '/admin/settings') {
+      await _adminUpdateSettings(request);
+      return;
+    }
+    await _writeError(
+      request.response,
+      HttpStatus.notFound,
+      'No admin route for `$method $path`.',
+      type: 'invalid_request_error',
+      code: 'not_found',
+    );
+  }
+
+  Future<Map<String, dynamic>> _adminStatus() async {
+    final headroom = await MemoryProbe.availableBytes();
+    String? loadedFile;
+    final path = _llm.loadedModelPath.value;
+    if (path.isNotEmpty) {
+      loadedFile = path.split('/').last;
+    }
+    String lastError = '';
+    try {
+      lastError = Get.find<LogService>().lastError.value;
+    } catch (_) {}
+    return {
+      'app': 'Astro MiniX',
+      'version': appVersion,
+      'server': 'running',
+      'loaded': _llm.isLoaded.value,
+      'model': loadedFile,
+      'generating': _llm.isGenerating.value,
+      'loading': _llm.isLoadingModel.value,
+      'headroomBytes': headroom,
+      'lastMeter': _llm.lastMeterSummary.value,
+      'lastError': lastError,
+      'settings': _adminSettings(),
+    };
+  }
+
+  Map<String, dynamic> _adminSettings() {
+    return {
+      'backend': _storage.backendType,
+      'threads': _storage.threadCount,
+      'contextSize': _storage.contextSize,
+      'gpuLayers': _storage.gpuLayers,
+    };
+  }
+
+  Future<Map<String, dynamic>> _adminLogs(HttpRequest request) async {
+    var tail = 200;
+    final raw = request.uri.queryParameters['tail'];
+    if (raw != null) {
+      tail = (int.tryParse(raw) ?? 200).clamp(1, 1000);
+    }
+    List<String> lines = [];
+    try {
+      final logService = Get.find<LogService>();
+      final filePath = logService.logFilePath;
+      if (filePath != null) {
+        final file = File(filePath);
+        if (await file.exists()) {
+          lines = await file.readAsLines();
+        }
+      }
+      if (lines.isEmpty) {
+        lines = logService.logs.map((e) => e.formatted).toList();
+      }
+    } catch (_) {}
+    final start = lines.length > tail ? lines.length - tail : 0;
+    return {'count': lines.length, 'tail': tail, 'lines': lines.sublist(start)};
+  }
+
+  Future<Map<String, dynamic>> _adminModels() async {
+    final ctrl = Get.find<ModelController>();
+    final loadedPath = _llm.loadedModelPath.value;
+    final models = <Map<String, dynamic>>[];
+    for (final filename in ctrl.downloadedModels) {
+      int? size;
+      try {
+        final f = File(ctrl.modelPathFor(filename));
+        if (await f.exists()) size = await f.length();
+      } catch (_) {}
+      models.add({
+        'filename': filename,
+        'sizeBytes': size,
+        'loaded': loadedPath.endsWith(filename),
+      });
+    }
+    return {'models': models};
+  }
+
+  Future<void> _adminLoad(HttpRequest request) async {
+    final body = await _readJsonObject(request);
+    final filename = body['filename'];
+    if (filename is! String || filename.isEmpty) {
+      await _writeError(
+        request.response,
+        HttpStatus.badRequest,
+        '`filename` (a downloaded model file name) is required.',
+        param: 'filename',
+      );
+      return;
+    }
+    final ctrl = Get.find<ModelController>();
+    if (!ctrl.downloadedModels.contains(filename)) {
+      await _writeError(
+        request.response,
+        HttpStatus.notFound,
+        'No downloaded model named `$filename`.',
+        code: 'model_not_found',
+      );
+      return;
+    }
+    final error = await ctrl.loadModelRemote(filename);
+    if (error != null) {
+      await _writeError(
+        request.response,
+        HttpStatus.internalServerError,
+        'Load failed: $error',
+        type: 'server_error',
+        code: 'load_failed',
+      );
+      return;
+    }
+    await _writeJson(request.response, await _adminStatus());
+  }
+
+  Future<void> _adminUpdateSettings(HttpRequest request) async {
+    final body = await _readJsonObject(request);
+    const backends = ['auto', 'metal', 'cpu', 'vulkan', 'opencl'];
+    final applied = <String, dynamic>{};
+    if (body.containsKey('backend')) {
+      final v = body['backend'];
+      if (v is! String || !backends.contains(v)) {
+        await _writeError(
+          request.response,
+          HttpStatus.badRequest,
+          '`backend` must be one of $backends.',
+          param: 'backend',
+        );
+        return;
+      }
+      _storage.backendType = v;
+      applied['backend'] = v;
+    }
+    if (body.containsKey('threads')) {
+      final v = body['threads'];
+      if (v is! int || v < 0 || v > 16) {
+        await _writeError(
+          request.response,
+          HttpStatus.badRequest,
+          '`threads` must be an int 0..16 (0 = auto).',
+          param: 'threads',
+        );
+        return;
+      }
+      _storage.threadCount = v;
+      applied['threads'] = v;
+    }
+    if (body.containsKey('contextSize')) {
+      final v = body['contextSize'];
+      const sizes = [0, 512, 1024, 2048, 4096, 8192, 16384];
+      if (v is! int || !sizes.contains(v)) {
+        await _writeError(
+          request.response,
+          HttpStatus.badRequest,
+          '`contextSize` must be one of $sizes (0 = default).',
+          param: 'contextSize',
+        );
+        return;
+      }
+      _storage.contextSize = v;
+      applied['contextSize'] = v;
+    }
+    if (body.containsKey('gpuLayers')) {
+      final v = body['gpuLayers'];
+      if (v is! int || v < 0 || v > 999) {
+        await _writeError(
+          request.response,
+          HttpStatus.badRequest,
+          '`gpuLayers` must be an int 0..999.',
+          param: 'gpuLayers',
+        );
+        return;
+      }
+      _storage.gpuLayers = v;
+      applied['gpuLayers'] = v;
+    }
+    await _writeJson(request.response, {
+      'applied': applied,
+      'note': 'Knobs apply on the next model load.',
+      'settings': _adminSettings(),
+    });
+  }
+
   void _applyCorsHeaders(HttpResponse response) {
     response.headers
       ..set(HttpHeaders.accessControlAllowOriginHeader, '*')
-      ..set(HttpHeaders.accessControlAllowMethodsHeader, 'GET, POST, OPTIONS')
+      ..set(
+        HttpHeaders.accessControlAllowMethodsHeader,
+        'GET, POST, PUT, OPTIONS',
+      )
       ..set(
         HttpHeaders.accessControlAllowHeadersHeader,
-        'authorization, content-type',
+        'authorization, content-type, x-admin-token',
       );
   }
 

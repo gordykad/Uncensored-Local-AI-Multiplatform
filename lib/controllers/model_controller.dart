@@ -197,6 +197,52 @@ class ModelController extends GetxController {
     }
   }
 
+  /// Absolute path for a downloaded model file (ticket 21, admin API).
+  String modelPathFor(String filename) =>
+      _manager.getModelPathByFilename(filename);
+
+  /// Remote load (ticket 21, admin API): same core as [loadModel] but
+  /// with NO UI interaction — no large-model approval dialog, no
+  /// snackbar. Returns null on success, or an error message.
+  Future<String?> loadModelRemote(String filename) async {
+    if (_llm.isGenerating.value) {
+      return 'A generation is in progress.';
+    }
+    if (isLoadingModel.value) {
+      cancelLoadModel();
+      await Future.delayed(const Duration(milliseconds: 200));
+    }
+    loadingModelFilename.value = filename;
+    isLoadingModel.value = true;
+    loadingStatusMsg.value = 'Preparing (remote)...';
+    loadError.value = '';
+    try {
+      final path = _manager.getModelPathByFilename(filename);
+      final file = File(path);
+      if (!await file.exists()) {
+        return 'Model file not found: $filename';
+      }
+      await _llm.loadModel(path);
+      if (!_llm.isLoaded.value) {
+        return 'Engine did not report the model as loaded.';
+      }
+      selectedModelFilename.value = filename;
+      _storage.lastModelId = filename;
+      return null;
+    } catch (e) {
+      loadError.value = e.toString();
+      try {
+        Get.find<LogService>()
+            .error('Remote load failed: $filename — $e', source: 'Model');
+      } catch (_) {}
+      return e.toString();
+    } finally {
+      isLoadingModel.value = false;
+      loadingStatusMsg.value = '';
+      loadingModelFilename.value = null;
+    }
+  }
+
   /// Cancel an in-progress model load.
   void cancelLoadModel() {
     _llm.cancelLoading();
