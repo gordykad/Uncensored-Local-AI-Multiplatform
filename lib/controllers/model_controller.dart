@@ -56,8 +56,41 @@ class ModelController extends GetxController {
   DownloadState? getDownloadState(String filename) =>
       _manager.getDownloadState(filename);
 
+  /// Import-scope hosts (founder law, 2026-11-03): model downloads from
+  /// stranger sources resolve ONLY to Hugging Face + GitHub.
+  static bool _isImportScopeHost(String host) {
+    return host == 'huggingface.co' ||
+        host.endsWith('.huggingface.co') ||
+        host == 'github.com' ||
+        host.endsWith('.github.com') ||
+        host == 'raw.githubusercontent.com' ||
+        host.endsWith('.githubusercontent.com');
+  }
+
   /// Download a model.
   Future<void> downloadModel(AiModelInfo model) async {
+    // Ticket 20: an imported model can only be (re)downloaded from a real
+    /// source inside the import scope.
+    if (model.isCustom) {
+      if (!model.hasRemoteUrl) {
+        Get.snackbar(
+          'No Download Link',
+          '${model.name} was imported from a file. Add a download link on its card to make it redownloadable.',
+          snackPosition: SnackPosition.BOTTOM,
+        );
+        return;
+      }
+      final host = Uri.tryParse(model.url)?.host ?? '';
+      if (!_isImportScopeHost(host)) {
+        Get.snackbar(
+          'Outside Import Scope',
+          'Model downloads are limited to Hugging Face and GitHub links.',
+          snackPosition: SnackPosition.BOTTOM,
+        );
+        return;
+      }
+    }
+
     final confirmed = await _confirmLargeModel(model.sizeGb);
     if (!confirmed) return;
 
@@ -454,6 +487,57 @@ class ModelController extends GetxController {
     } catch (_) {
       return null;
     }
+  }
+
+  /// Attach (or replace) the download source of an imported model
+  /// (ticket 20). Validates the link, HEADs it for size like the add-URL
+  /// flow, and rewrites the persisted record — the file is untouched.
+  Future<void> setCustomModelUrl(AiModelInfo model, String url) async {
+    final uri = Uri.tryParse(url);
+    if (uri == null || !url.startsWith('http')) {
+      Get.snackbar('Invalid URL', 'URL must start with http:// or https://',
+          snackPosition: SnackPosition.BOTTOM);
+      return;
+    }
+    if (!_isImportScopeHost(uri.host)) {
+      Get.snackbar(
+        'Outside Import Scope',
+        'Model downloads are limited to Hugging Face and GitHub links.',
+        snackPosition: SnackPosition.BOTTOM,
+      );
+      return;
+    }
+
+    double sizeGb = 0;
+    try {
+      final client = HttpClient();
+      final request = await client.headUrl(uri);
+      final response = await request.close();
+      final contentLength = response.contentLength;
+      client.close();
+      if (contentLength > 0) {
+        sizeGb = double.parse(
+            (contentLength / (1024 * 1024 * 1024)).toStringAsFixed(2));
+      }
+    } catch (_) {
+      // HEAD failed — keep the recorded size.
+    }
+
+    int minRam = model.minRamGb;
+    if (sizeGb > 0) {
+      minRam = ((sizeGb * 1.2) / 2).ceil() * 2;
+      if (minRam < 4) minRam = 4;
+    }
+
+    _manager.updateCustomModel(model.copyWith(
+      url: url,
+      sizeGb: sizeGb > 0 ? sizeGb : model.sizeGb,
+      minRamGb: minRam,
+      badge: 'USER ADDED',
+    ));
+    Get.snackbar('Link Saved',
+        '${model.name} can now be redownloaded from the models screen.',
+        snackPosition: SnackPosition.BOTTOM);
   }
 
   /// Add a custom model from a URL.

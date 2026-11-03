@@ -379,6 +379,15 @@ class ModelManager extends GetxService {
     _persistCustomModels();
   }
 
+  /// Replace a custom model's persisted record (ticket 20: attach or fix
+  /// the download source of an imported model without touching its file).
+  void updateCustomModel(AiModelInfo updated) {
+    final idx = catalog.indexWhere((m) => m.id == updated.id);
+    if (idx == -1) return;
+    catalog[idx] = updated;
+    _persistCustomModels();
+  }
+
   /// Remove a custom model from catalog and persistence.
   void removeCustomModel(String id) {
     catalog.removeWhere((m) => m.id == id);

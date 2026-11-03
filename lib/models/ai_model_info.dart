@@ -52,6 +52,26 @@ class AiModelInfo {
         'recommended': recommended,
       };
 
+  /// True when this entry carries a real remote source URL it can be
+  /// (re)downloaded from. File imports persist the literal 'local' — they
+  /// have no source until the user attaches one (ticket 20).
+  bool get hasRemoteUrl => url.startsWith('http');
+
+  AiModelInfo copyWith({String? url, double? sizeGb, int? minRamGb, String? badge}) {
+    return AiModelInfo(
+      id: id,
+      name: name,
+      filename: filename,
+      url: url ?? this.url,
+      sizeGb: sizeGb ?? this.sizeGb,
+      minRamGb: minRamGb ?? this.minRamGb,
+      label: label,
+      badge: badge ?? this.badge,
+      systemPrompt: systemPrompt,
+      recommended: recommended,
+    );
+  }
+
   bool get isUncensored => label == 'UNCENSORED';
   bool get isStandard => label == 'STANDARD';
   bool get isCustom => label == 'CUSTOM';

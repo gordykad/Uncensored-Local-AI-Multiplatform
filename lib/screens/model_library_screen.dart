@@ -225,6 +225,9 @@ class _ModelLibraryBodyState extends State<_ModelLibraryBody> {
                         onDelete: () => _confirmDelete(context, ctrl, model),
                         onRemoveCustom: () =>
                             _confirmRemoveCustom(context, ctrl, model),
+                        onAddLink: model.isCustom
+                            ? () => _showSetLinkDialog(context, ctrl, model)
+                            : null,
                         onCancelLoad: () => ctrl.cancelLoadModel(),
                         onUnload: () => ctrl.unloadCurrentModel(),
                       ),
@@ -333,13 +336,18 @@ class _ModelLibraryBodyState extends State<_ModelLibraryBody> {
     ModelController ctrl,
     AiModelInfo model,
   ) {
+    final keepNote = model.isCustom
+        ? (model.hasRemoteUrl
+            ? '\n\nIt stays in your library — you can redownload it anytime.'
+            : '\n\nIt stays in your library, but without a download link it cannot be redownloaded.')
+        : '';
     Get.dialog(
       AlertDialog(
         backgroundColor: context.bgPanel,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         title: Text('Delete Model File', style: TextStyle(color: context.text)),
         content: Text(
-          'Delete ${model.name}? (${model.sizeGb} GB will be freed)',
+          'Delete ${model.name}? (${model.sizeGb} GB will be freed)$keepNote',
           style: TextStyle(color: context.textM),
         ),
         actions: [
@@ -400,6 +408,91 @@ class _ModelLibraryBodyState extends State<_ModelLibraryBody> {
               elevation: 0,
             ),
             child: const Text('Remove', style: TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showSetLinkDialog(
+    BuildContext context,
+    ModelController ctrl,
+    AiModelInfo model,
+  ) {
+    final urlCtrl =
+        TextEditingController(text: model.hasRemoteUrl ? model.url : '');
+
+    Get.dialog(
+      AlertDialog(
+        backgroundColor: context.bgPanel,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: Text('Download Link', style: TextStyle(color: context.text)),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Attach a Hugging Face or GitHub link for "${model.name}" so it can be redownloaded after the file is deleted.',
+              style: TextStyle(color: context.textM, fontSize: 13),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: urlCtrl,
+              style: TextStyle(color: context.text, fontSize: 14),
+              maxLines: 2,
+              decoration: InputDecoration(
+                labelText: 'Download URL',
+                labelStyle: TextStyle(color: context.textD, fontSize: 13),
+                hintText: 'https://huggingface.co/.../model.gguf',
+                hintStyle: TextStyle(color: context.textD.withOpacity(0.5)),
+                filled: true,
+                fillColor: context.bgInput,
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(10),
+                  borderSide: BorderSide(color: context.border),
+                ),
+                enabledBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(10),
+                  borderSide: BorderSide(color: context.border),
+                ),
+                focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(10),
+                  borderSide: const BorderSide(color: AppColors.accent),
+                ),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Get.back(),
+            child: Text('Cancel', style: TextStyle(color: context.textD)),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              final url = urlCtrl.text.trim();
+              if (url.isEmpty) {
+                Get.snackbar(
+                  'Missing URL',
+                  'Paste a download link first.',
+                  snackPosition: SnackPosition.BOTTOM,
+                );
+                return;
+              }
+              Get.back();
+              ctrl.setCustomModelUrl(model, url);
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.accent,
+              elevation: 0,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(8),
+              ),
+            ),
+            child: const Text(
+              'Save Link',
+              style: TextStyle(color: Colors.white),
+            ),
           ),
         ],
       ),

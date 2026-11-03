@@ -19,6 +19,7 @@ class ModelCard extends StatelessWidget {
   final VoidCallback onLoad;
   final VoidCallback onDelete;
   final VoidCallback? onRemoveCustom;
+  final VoidCallback? onAddLink;
   final VoidCallback? onCancelLoad;
   final VoidCallback? onUnload;
 
@@ -37,6 +38,7 @@ class ModelCard extends StatelessWidget {
     required this.onLoad,
     required this.onDelete,
     this.onRemoveCustom,
+    this.onAddLink,
     this.onCancelLoad,
     this.onUnload,
   });
@@ -141,6 +143,19 @@ class ModelCard extends StatelessWidget {
             if (isCurrentlyDownloading && downloadState != null) ...[
               _buildDownloadProgress(context, downloadState!),
               const SizedBox(height: 16),
+            ],
+
+            // ── No-link note for file imports (ticket 20) ─────────────
+            if (!isDownloaded &&
+                !isCurrentlyDownloading &&
+                !isLoadingModel &&
+                model.isCustom &&
+                !model.hasRemoteUrl) ...[
+              Text(
+                'Imported from a file — add a download link to make it redownloadable.',
+                style: TextStyle(fontSize: 11, color: context.textD),
+              ),
+              const SizedBox(height: 10),
             ],
 
             // ── Action buttons ────────────────────────────────────
@@ -298,8 +313,9 @@ class ModelCard extends StatelessWidget {
   }
 
   Widget _buildActions(BuildContext context) {
-    // If it's a custom model, we show the red remove icon.
-    // We use it instead of the regular 'delete file' if it's downloaded.
+    // Custom models get BOTH actions (ticket 20): delete the file only —
+    // the record stays in the library and the model can be redownloaded —
+    // or remove the record entirely (the red icon).
     final Widget removeIcon = IconButton(
       onPressed: onRemoveCustom,
       icon: const Icon(Icons.remove_circle_outline, size: 20),
@@ -309,7 +325,26 @@ class ModelCard extends StatelessWidget {
 
     return Row(
       children: [
-        if (!isDownloaded) ...[
+        if (!isDownloaded && model.isCustom && !model.hasRemoteUrl) ...[
+          Expanded(
+            child: OutlinedButton.icon(
+              onPressed: onAddLink,
+              icon: const Icon(Icons.link_rounded, size: 16),
+              label: const Text('Add download link'),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: AppColors.accentHi,
+                side: const BorderSide(color: AppColors.accent),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+              ),
+            ),
+          ),
+          if (onRemoveCustom != null) ...[
+            const SizedBox(width: 8),
+            removeIcon,
+          ],
+        ],
+
+        if (!isDownloaded && !(model.isCustom && !model.hasRemoteUrl)) ...[
           Expanded(
             child: ElevatedButton.icon(
               onPressed: onDownload,
@@ -344,15 +379,15 @@ class ModelCard extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 8),
-          if (model.isCustom && onRemoveCustom != null)
-            removeIcon
-          else
-            IconButton(
-              onPressed: onDelete,
-              icon: const Icon(Icons.delete_outline_rounded, size: 20),
-              color: context.textD,
-              tooltip: 'Delete model file',
-            ),
+          IconButton(
+            onPressed: onDelete,
+            icon: const Icon(Icons.delete_outline_rounded, size: 20),
+            color: context.textD,
+            tooltip: model.isCustom
+                ? 'Delete file only (stays in library)'
+                : 'Delete model file',
+          ),
+          if (model.isCustom && onRemoveCustom != null) removeIcon,
         ],
 
         if (isDownloaded && isLoaded) ...[
@@ -387,6 +422,12 @@ class ModelCard extends StatelessWidget {
             ),
           if (model.isCustom && onRemoveCustom != null) ...[
             const SizedBox(width: 8),
+            IconButton(
+              onPressed: onDelete,
+              icon: const Icon(Icons.delete_outline_rounded, size: 20),
+              color: context.textD,
+              tooltip: 'Delete file only (stays in library)',
+            ),
             removeIcon,
           ],
         ],
