@@ -635,14 +635,14 @@ class LocalApiServerService extends GetxService {
   // phone's own test buttons use loopback and never narrate.
   void _noteAdmin(HttpRequest request, String label) {
     try {
-      if (request.connectionInfo.remoteAddress.isLoopback) return;
+      if (request.connectionInfo?.remoteAddress.isLoopback ?? false) return;
       Get.find<AdminActivityService>().note(label);
     } catch (_) {}
   }
 
   void _touchAdmin(HttpRequest request) {
     try {
-      if (request.connectionInfo.remoteAddress.isLoopback) return;
+      if (request.connectionInfo?.remoteAddress.isLoopback ?? false) return;
       Get.find<AdminActivityService>().touchSession();
     } catch (_) {}
   }
