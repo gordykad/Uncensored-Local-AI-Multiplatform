@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
@@ -10,6 +11,7 @@ import 'package:path/path.dart' as p;
 
 import '../models/ai_model_info.dart';
 import '../models/download_state.dart';
+import 'background_download_service.dart';
 import 'wakelock_service.dart';
 
 /// Manages model catalog, downloads, and local file discovery.
@@ -28,6 +30,7 @@ class ModelManager extends GetxService {
     _modelsDir = await _getModelsDir();
     await _loadCatalog();
     await scanDownloaded();
+    if (Platform.isIOS) await _adoptBackgroundDownloads();
     return this;
   }
 
@@ -114,10 +117,148 @@ class ModelManager extends GetxService {
     return activeDownloads[filename];
   }
 
+  // ── Background downloads (ticket 05, iOS) ──────────────────
+  // The transfer itself runs in the native background URLSession;
+  // Dart only mirrors its status into DownloadState for the UI and
+  // resolves the future downloadModel() is awaiting.
+  final _bgTimers = <String, Timer>{};
+  final _bgDone = <String, void Function(String? error)>{};
+  final _bgLastBytes = <String, int>{};
+  final _bgLastTick = <String, DateTime>{};
+
+  /// Adopt transfers the native session kept running while the app
+  /// was suspended or killed (called from init on iOS).
+  Future<void> _adoptBackgroundDownloads() async {
+    final statuses = await BackgroundDownloadService.allStatuses();
+    for (final entry in statuses.entries) {
+      final status = entry.value['status'] as String? ?? 'none';
+      if (status == 'completed' || status == 'failed') {
+        // A completed file is already in the models dir and was
+        // picked up by scanDownloaded; just clear the bookkeeping.
+        await BackgroundDownloadService.ack(entry.key);
+      } else if (status == 'downloading') {
+        activeDownloads[entry.key] = DownloadState(
+          filename: entry.key,
+          totalBytes: (entry.value['total'] as num?)?.toDouble() ?? 0,
+          receivedBytes: (entry.value['received'] as num?)?.toDouble() ?? 0,
+        );
+        _startBackgroundPoll(entry.key);
+      }
+    }
+    if (statuses.isNotEmpty) _notifyUI();
+  }
+
+  Future<void> _downloadModelBackground(AiModelInfo model) async {
+    if (!BackgroundDownloadService.isImportScopeUrl(model.url)) {
+      throw const FormatException(
+        'Model downloads are limited to Hugging Face and GitHub links.',
+      );
+    }
+
+    try {
+      Get.find<WakelockService>().enableForDownload(modelName: model.name);
+    } catch (_) {}
+
+    activeDownloads[model.filename] = DownloadState(
+      filename: model.filename,
+      totalBytes: model.sizeGb * 1024 * 1024 * 1024,
+    );
+    _notifyUI();
+
+    final completer = Completer<void>();
+    _bgDone[model.filename] = (error) {
+      if (completer.isCompleted) return;
+      if (error != null) {
+        completer.completeError(Exception(error));
+      } else {
+        completer.complete();
+      }
+    };
+
+    await BackgroundDownloadService.start(
+      url: model.url,
+      filename: model.filename,
+      destDir: _modelsDir,
+      displayName: model.name,
+    );
+    _startBackgroundPoll(model.filename);
+    await completer.future;
+  }
+
+  void _startBackgroundPoll(String filename) {
+    _bgLastBytes[filename] =
+        activeDownloads[filename]?.receivedBytes.toInt() ?? 0;
+    _bgLastTick[filename] = DateTime.now();
+    _bgTimers[filename] = Timer.periodic(const Duration(seconds: 1), (_) {
+      unawaited(_pollBackgroundOnce(filename));
+    });
+  }
+
+  Future<void> _pollBackgroundOnce(String filename) async {
+    final st = await BackgroundDownloadService.status(filename);
+    if (st == null) return;
+    final status = st['status'] as String? ?? 'none';
+    final state = activeDownloads[filename];
+
+    if (status == 'downloading') {
+      final received = (st['received'] as num?)?.toInt() ?? 0;
+      final total = (st['total'] as num?)?.toInt() ?? 0;
+      if (state != null) {
+        final now = DateTime.now();
+        final lastAt = _bgLastTick[filename];
+        final lastBytes = _bgLastBytes[filename] ?? 0;
+        if (lastAt != null) {
+          final dt = now.difference(lastAt).inMilliseconds / 1000;
+          if (dt > 0) {
+            state.speedBytesPerSec = (received - lastBytes) / dt;
+          }
+        }
+        _bgLastTick[filename] = now;
+        _bgLastBytes[filename] = received;
+        state.receivedBytes = received.toDouble();
+        if (total > 0) state.totalBytes = total.toDouble();
+      }
+      _notifyUI();
+      return;
+    }
+
+    // Terminal: completed, failed, or vanished (external cancel).
+    _bgTimers.remove(filename)?.cancel();
+    _bgLastBytes.remove(filename);
+    _bgLastTick.remove(filename);
+    await BackgroundDownloadService.ack(filename);
+
+    String? error;
+    if (status == 'completed') {
+      await scanDownloaded();
+    } else if (status == 'failed') {
+      error = (st['error'] as String?) ?? 'Download failed';
+    }
+    if (state != null) state.isActive = false;
+    activeDownloads.remove(filename);
+    _notifyUI();
+
+    final done = _bgDone.remove(filename);
+    done?.call(error);
+
+    if (activeDownloads.isEmpty) {
+      try {
+        await Get.find<WakelockService>().disable();
+      } catch (_) {}
+    }
+  }
+
   /// Download a model with real-time speed tracking.
   /// Enables wake lock + foreground service to keep download alive.
   Future<void> downloadModel(AiModelInfo model) async {
     if (isDownloading(model.filename)) return;
+
+    // Ticket 05: on iOS the system carries the transfer (background
+    // URLSession) so it survives the app being suspended or closed.
+    if (Platform.isIOS) {
+      await _downloadModelBackground(model);
+      return;
+    }
 
     // Enable wake lock + foreground service for download (fire and forget so UI updates instantly)
     WakelockService? wakelockService;
@@ -230,6 +371,18 @@ class ModelManager extends GetxService {
 
   /// Cancel an active download.
   void cancelDownload(String filename) {
+    // Ticket 05: cancel the native background task on iOS.
+    if (Platform.isIOS && _bgTimers.containsKey(filename)) {
+      unawaited(BackgroundDownloadService.cancel(filename));
+      _bgTimers.remove(filename)?.cancel();
+      _bgLastBytes.remove(filename);
+      _bgLastTick.remove(filename);
+      activeDownloads.remove(filename);
+      _notifyUI();
+      final done = _bgDone.remove(filename);
+      done?.call(null);
+      return;
+    }
     if (activeDownloads.containsKey(filename)) {
       activeDownloads[filename]!.isCancelled = true;
       activeDownloads[filename]!.isActive = false;

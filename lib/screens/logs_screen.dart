@@ -8,6 +8,7 @@ import '../theme/app_colors.dart';
 import '../services/llm_service.dart';
 import '../services/log_service.dart';
 import '../services/memory_probe.dart';
+import '../services/telemetry_service.dart';
 import '../controllers/model_controller.dart';
 import '../widgets/faithful/stats.dart';
 import '../widgets/faithful/trace_pickers.dart';
@@ -94,6 +95,9 @@ class LogsScreen extends StatelessWidget {
 
           // ── Engine panel (ticket 08): stats card + agent trace ──
           const _EnginePanel(),
+
+          // ── Telemetry panel (ticket 22) ───────────────
+          const _TelemetryPanel(),
 
           // ── Filter chips ──────────────────────────────
           _FilterBar(),
@@ -529,4 +533,223 @@ class _EnginePanel extends StatelessWidget {
       }),
     );
   }
+}
+
+/// Telemetry panel (ticket 22): current values from the sampler plus
+/// sparklines over the ring buffer. GPU utilisation is not exposed to
+/// third-party apps on iOS, so it is never graphed here.
+class _TelemetryPanel extends StatelessWidget {
+  const _TelemetryPanel();
+
+  static const _thermalNames = ['Nominal', 'Fair', 'Serious', 'Critical'];
+
+  @override
+  Widget build(BuildContext context) {
+    TelemetryService? svc;
+    try {
+      svc = Get.find<TelemetryService>();
+    } catch (_) {}
+    if (svc == null) return const SizedBox.shrink();
+    final service = svc;
+    return Obx(() {
+      final latest = service.latest.value;
+      if (latest == null) return const SizedBox.shrink();
+      final samples = service.samples.toList();
+      String gb(int bytes) =>
+          bytes < 0 ? 'n/a' : '${(bytes / 1073741824).toStringAsFixed(2)} GB';
+      String mb(int bytes) =>
+          bytes < 0 ? 'n/a' : '${(bytes / 1048576).toStringAsFixed(0)} MB';
+      final thermal = latest.thermal.clamp(0, 3);
+      final thermalColor = thermal >= 2
+          ? AppColors.red
+          : thermal == 1
+              ? AppColors.orange
+              : AppColors.green;
+      Widget stat(String label, String value) {
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              label,
+              style: TextStyle(
+                color: context.textD,
+                fontSize: 9.5,
+                fontWeight: FontWeight.w600,
+                letterSpacing: 0.8,
+              ),
+            ),
+            const SizedBox(height: 2),
+            Text(
+              value,
+              style: TextStyle(
+                color: context.text,
+                fontSize: 13.5,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
+        );
+      }
+
+      Widget spark(String label, List<double> values, Color color) {
+        return Padding(
+          padding: const EdgeInsets.only(top: 8),
+          child: Row(
+            children: [
+              SizedBox(
+                width: 64,
+                child: Text(
+                  label,
+                  style: TextStyle(color: context.textD, fontSize: 10),
+                ),
+              ),
+              Expanded(
+                child: SizedBox(
+                  height: 26,
+                  child: CustomPaint(
+                    painter: _SparklinePainter(values, color),
+                    size: const Size(double.infinity, 26),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        );
+      }
+
+      return Container(
+        margin: const EdgeInsets.fromLTRB(12, 10, 12, 2),
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: context.bgPanel,
+          border: Border.all(color: context.border),
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Text(
+                  'TELEMETRY',
+                  style: TextStyle(
+                    color: context.text,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 1.2,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                if (latest.generating)
+                  Text(
+                    'GENERATING',
+                    style: TextStyle(
+                      color: AppColors.accentHi,
+                      fontSize: 9.5,
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: 0.8,
+                    ),
+                  ),
+                const Spacer(),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 7,
+                    vertical: 2.5,
+                  ),
+                  decoration: BoxDecoration(
+                    color: thermalColor.withValues(alpha: 0.14),
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: Text(
+                    _thermalNames[thermal],
+                    style: TextStyle(
+                      color: thermalColor,
+                      fontSize: 10,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            Wrap(
+              spacing: 18,
+              runSpacing: 8,
+              children: [
+                stat('HEADROOM', gb(latest.headroomBytes)),
+                stat('FOOTPRINT', mb(latest.footprintBytes)),
+                stat('CPU', '${latest.cpuPct.toStringAsFixed(0)}%'),
+                stat('FAULTS/S', latest.majfltPerSec.toStringAsFixed(1)),
+                stat('METAL', mb(latest.mtlAllocBytes)),
+                stat(
+                  'BATTERY',
+                  latest.batteryLevel < 0
+                      ? 'n/a'
+                      : '${(latest.batteryLevel * 100).round()}%',
+                ),
+              ],
+            ),
+            spark(
+              'Headroom',
+              samples.map((s) => s.headroomBytes / 1048576).toList(),
+              AppColors.accentHi,
+            ),
+            spark(
+              'CPU %',
+              samples.map((s) => s.cpuPct).toList(),
+              AppColors.green,
+            ),
+            spark(
+              'Faults/s',
+              samples.map((s) => s.majfltPerSec).toList(),
+              AppColors.orange,
+            ),
+          ],
+        ),
+      );
+    });
+  }
+}
+
+class _SparklinePainter extends CustomPainter {
+  final List<double> values;
+  final Color color;
+  const _SparklinePainter(this.values, this.color);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (values.length < 2) return;
+    var min = values.first;
+    var max = values.first;
+    for (final v in values) {
+      if (v < min) min = v;
+      if (v > max) max = v;
+    }
+    if (max - min < 0.0001) {
+      max = min + 1;
+    }
+    final path = Path();
+    for (var i = 0; i < values.length; i++) {
+      final x = size.width * i / (values.length - 1);
+      final y =
+          size.height - ((values[i] - min) / (max - min)) * (size.height - 4) - 2;
+      if (i == 0) {
+        path.moveTo(x, y);
+      } else {
+        path.lineTo(x, y);
+      }
+    }
+    canvas.drawPath(
+      path,
+      Paint()
+        ..color = color
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.5
+        ..strokeJoin = StrokeJoin.round,
+    );
+  }
+
+  @override
+  bool shouldRepaint(_SparklinePainter old) => old.values != values;
 }

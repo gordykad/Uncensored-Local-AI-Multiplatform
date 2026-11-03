@@ -6,6 +6,7 @@ import '../controllers/chat_controller.dart';
 import '../controllers/model_controller.dart';
 import '../controllers/theme_controller.dart';
 import '../services/llm_service.dart';
+import '../services/admin_activity_service.dart';
 import '../widgets/chat_sidebar.dart';
 import '../widgets/chat_bubble.dart';
 import '../widgets/faithful/orb.dart';
@@ -111,12 +112,21 @@ class _HomeScreenState extends State<HomeScreen> {
     final width = MediaQuery.of(context).size.width;
     final isDesktop = width >= 768;
 
-    return Stack(
-      children: [
-        if (isDesktop) _buildDesktopLayout() else _buildMobileLayout(),
-        // ── Global model loading overlay ──
-        _buildLoadingOverlay(),
-      ],
+    // Keyboard fix (Kai, 2026-11-03): a tap anywhere outside a text
+    // field drops the keyboard. The IndexedStack tabs keep the chat
+    // field alive, so without this the keyboard could never be
+    // dismissed after switching tabs.
+    return GestureDetector(
+      onTap: () => FocusManager.instance.primaryFocus?.unfocus(),
+      child: Stack(
+        children: [
+          if (isDesktop) _buildDesktopLayout() else _buildMobileLayout(),
+          // ── Global model loading overlay ──
+          _buildLoadingOverlay(),
+          // ── See-Astro-drive toasts (ticket 24) ──
+          const _AdminToastOverlay(),
+        ],
+      ),
     );
   }
 
@@ -366,7 +376,13 @@ class _HomeScreenState extends State<HomeScreen> {
         ),
         child: NavigationBar(
           selectedIndex: _mobileTabIndex,
-          onDestinationSelected: (i) => setState(() => _mobileTabIndex = i),
+          onDestinationSelected: (i) {
+            // Keyboard fix: switching tabs always drops the keyboard —
+            // the IndexedStack keeps the chat field (and its focus)
+            // alive underneath the other tabs.
+            FocusManager.instance.primaryFocus?.unfocus();
+            setState(() => _mobileTabIndex = i);
+          },
           backgroundColor: Colors.transparent,
           elevation: 0,
           indicatorColor: AppColors.accent.withOpacity(0.15),
@@ -1038,6 +1054,78 @@ class _HomeScreenState extends State<HomeScreen> {
           child: Icon(icon, size: 20, color: Colors.white),
         ),
       ),
+    );
+  }
+}
+
+/// See-Astro-drive toasts (ticket 24): small dark chips at the top of
+/// the chat page narrating each admin action while Astro drives —
+/// reads included. They queue politely (the service caps the stack)
+/// and fade on their own.
+class _AdminToastOverlay extends StatelessWidget {
+  const _AdminToastOverlay();
+
+  @override
+  Widget build(BuildContext context) {
+    AdminActivityService? activity;
+    try {
+      activity = Get.find<AdminActivityService>();
+    } catch (_) {}
+    if (activity == null) return const SizedBox.shrink();
+    final svc = activity;
+    return Positioned(
+      top: MediaQuery.of(context).padding.top + 8,
+      left: 16,
+      right: 16,
+      child: Obx(() {
+        if (svc.toasts.isEmpty) return const SizedBox.shrink();
+        return Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            for (final toast in svc.toasts)
+              Container(
+                margin: const EdgeInsets.only(bottom: 6),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 8,
+                ),
+                decoration: BoxDecoration(
+                  color: context.bgPanel,
+                  border: Border.all(color: context.border),
+                  borderRadius: BorderRadius.circular(10),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: 0.35),
+                      blurRadius: 12,
+                      offset: const Offset(0, 4),
+                    ),
+                  ],
+                ),
+                child: Row(
+                  children: [
+                    Container(
+                      width: 7,
+                      height: 7,
+                      decoration: const BoxDecoration(
+                        color: AppColors.accent,
+                        shape: BoxShape.circle,
+                      ),
+                    ),
+                    const SizedBox(width: 9),
+                    Expanded(
+                      child: Text(
+                        toast.label,
+                        style: TextStyle(color: context.text, fontSize: 12.5),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+          ],
+        );
+      }),
     );
   }
 }

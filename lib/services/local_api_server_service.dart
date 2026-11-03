@@ -7,10 +7,12 @@ import 'package:get/get.dart';
 import 'package:llamadart/llamadart.dart';
 
 import '../controllers/model_controller.dart';
+import 'admin_activity_service.dart';
 import 'chat_storage_service.dart';
 import 'llm_service.dart';
 import 'log_service.dart';
 import 'memory_probe.dart';
+import 'telemetry_service.dart';
 import 'wakelock_service.dart';
 
 class LocalApiServerService extends GetxService {
@@ -262,6 +264,7 @@ class LocalApiServerService extends GetxService {
       return;
     }
 
+    _noteAdmin(request, 'Astro ran a generation');
     final body = await _readJsonObject(request);
     final chatRequest = _parseChatCompletionRequest(body);
 
@@ -588,7 +591,7 @@ class LocalApiServerService extends GetxService {
   // token, on loopback too. The token is generated on first use and
   // shown in the API screen; regenerating invalidates the old one.
 
-  static const appVersion = '1.6.0';
+  static const appVersion = '1.7.0';
 
   String get adminToken {
     var token = _storage.adminToken;
@@ -602,6 +605,10 @@ class LocalApiServerService extends GetxService {
   String regenerateAdminToken() {
     final token = _generateAdminToken();
     _storage.adminToken = token;
+    // Ticket 24: a new token ends the narrated session too.
+    try {
+      Get.find<AdminActivityService>().endSession();
+    } catch (_) {}
     return token;
   }
 
@@ -622,6 +629,24 @@ class LocalApiServerService extends GetxService {
     return false;
   }
 
+  // ── See-Astro-drive narration (ticket 24) ──────────────────
+  // Every admin action is narrated on screen — reads included, no
+  // silent reads. Only remote (non-loopback) callers count: the
+  // phone's own test buttons use loopback and never narrate.
+  void _noteAdmin(HttpRequest request, String label) {
+    try {
+      if (request.connectionInfo.remoteAddress.isLoopback) return;
+      Get.find<AdminActivityService>().note(label);
+    } catch (_) {}
+  }
+
+  void _touchAdmin(HttpRequest request) {
+    try {
+      if (request.connectionInfo.remoteAddress.isLoopback) return;
+      Get.find<AdminActivityService>().touchSession();
+    } catch (_) {}
+  }
+
   Future<void> _handleAdmin(HttpRequest request, String path) async {
     if (!_adminAuthorized(request)) {
       await _writeError(
@@ -635,27 +660,38 @@ class LocalApiServerService extends GetxService {
     }
     final method = request.method;
     if (method == 'GET' && path == '/admin/status') {
+      _noteAdmin(request, 'Astro checked status');
       await _writeJson(request.response, await _adminStatus());
       return;
     }
     if (method == 'GET' && path == '/admin/logs') {
+      _noteAdmin(request, 'Astro pulled logs');
       await _writeJson(request.response, await _adminLogs(request));
       return;
     }
     if (method == 'GET' && path == '/admin/models') {
+      _noteAdmin(request, 'Astro listed models');
       await _writeJson(request.response, await _adminModels());
       return;
     }
+    if (method == 'GET' && path == '/admin/telemetry') {
+      _noteAdmin(request, 'Astro pulled telemetry');
+      await _writeJson(request.response, _adminTelemetry(request));
+      return;
+    }
     if (method == 'POST' && path == '/admin/load') {
+      _touchAdmin(request);
       await _adminLoad(request);
       return;
     }
     if (method == 'POST' && path == '/admin/unload') {
+      _noteAdmin(request, 'Astro unloaded the model');
       await Get.find<ModelController>().unloadModel();
       await _writeJson(request.response, await _adminStatus());
       return;
     }
     if (method == 'GET' && path == '/admin/settings') {
+      _noteAdmin(request, 'Astro read settings');
       await _writeJson(request.response, _adminSettings());
       return;
     }
@@ -773,7 +809,11 @@ class LocalApiServerService extends GetxService {
       return;
     }
     final error = await ctrl.loadModelRemote(filename);
+    final short = filename.endsWith('.gguf')
+        ? filename.substring(0, filename.length - 5)
+        : filename;
     if (error != null) {
+      _noteAdmin(request, 'Astro tried to load $short - it failed');
       await _writeError(
         request.response,
         HttpStatus.internalServerError,
@@ -783,6 +823,7 @@ class LocalApiServerService extends GetxService {
       );
       return;
     }
+    _noteAdmin(request, 'Astro loaded $short');
     await _writeJson(request.response, await _adminStatus());
   }
 
@@ -847,11 +888,38 @@ class LocalApiServerService extends GetxService {
       _storage.gpuLayers = v;
       applied['gpuLayers'] = v;
     }
+    if (applied.isNotEmpty) {
+      _noteAdmin(
+        request,
+        'Astro changed settings: '
+        '${applied.entries.map((e) => '${e.key} ${e.value}').join(', ')}',
+      );
+    }
     await _writeJson(request.response, {
       'applied': applied,
       'note': 'Knobs apply on the next model load.',
       'settings': _adminSettings(),
     });
+  }
+
+  /// Ticket 22: the telemetry series (same admin auth as every
+  /// /admin route). Served from the sampler's ring buffer.
+  Map<String, dynamic> _adminTelemetry(HttpRequest request) {
+    var tail = 300;
+    final raw = request.uri.queryParameters['tail'];
+    if (raw != null) {
+      tail = (int.tryParse(raw) ?? 300).clamp(1, 900);
+    }
+    try {
+      final svc = Get.find<TelemetryService>();
+      return {
+        'count': svc.samples.length,
+        'tail': tail,
+        'samples': svc.tailJson(tail),
+      };
+    } catch (_) {
+      return {'count': 0, 'tail': tail, 'samples': <Map<String, dynamic>>[]};
+    }
   }
 
   void _applyCorsHeaders(HttpResponse response) {

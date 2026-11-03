@@ -11,6 +11,7 @@ import '../services/model_manager.dart';
 import '../services/llm_service.dart';
 import '../services/chat_storage_service.dart';
 import '../services/log_service.dart';
+import '../services/memory_probe.dart';
 
 class ModelController extends GetxController {
   final ModelManager _manager = Get.find<ModelManager>();
@@ -92,7 +93,7 @@ class ModelController extends GetxController {
       }
     }
 
-    final confirmed = await _confirmLargeModel(model.sizeGb);
+    final confirmed = await _confirmDownloadFit(model);
     if (!confirmed) return;
 
     LogService? log;
@@ -311,6 +312,59 @@ class ModelController extends GetxController {
   void _stopCachingPulse() {
     _pulseTimer?.cancel();
     _pulseTimer = null;
+  }
+
+  /// Ticket 05: the pre-download fit card — model size, free disk
+  /// now, free disk after. A download that cannot fit is blocked
+  /// outright; the card itself shows for large models and whenever
+  /// space runs tight, so the numbers are seen before the bytes move.
+  Future<bool> _confirmDownloadFit(AiModelInfo model) async {
+    final sizeGb = model.sizeGb;
+    final sizeBytes = (sizeGb * 1024 * 1024 * 1024).round();
+    final freeBytes = await MemoryProbe.diskFreeBytes();
+    String fmt(int? b) =>
+        b == null ? 'unknown' : '${(b / 1073741824).toStringAsFixed(2)} GB';
+
+    final ctx = Get.context;
+    if (ctx == null) return false;
+
+    if (freeBytes != null && sizeBytes > freeBytes) {
+      await showApprovalDialog(
+        ctx,
+        title: 'Not Enough Space',
+        itemName: model.name,
+        sizeGb: sizeGb,
+        confirmLabel: 'Got It',
+        note:
+            'This model is ${fmt(sizeBytes)} and only ${fmt(freeBytes)} '
+            'is free. Free up space, then try again.',
+      );
+      return false;
+    }
+
+    final tight =
+        freeBytes != null && freeBytes - sizeBytes < 1073741824;
+    if (sizeGb < 3.5 && !tight) return true;
+
+    final after = freeBytes == null ? null : freeBytes - sizeBytes;
+    final note = StringBuffer(
+      'Size ${fmt(sizeBytes)} · Free now ${fmt(freeBytes)} · '
+      'Free after ${fmt(after)}.',
+    );
+    if (sizeGb >= 3.5) {
+      note.write(
+        ' Devices with less than 8GB of RAM may crash or run out of '
+        'storage while processing this model.',
+      );
+    }
+    return showApprovalDialog(
+      ctx,
+      title: sizeGb >= 3.5 ? 'Large Model' : 'Download Model',
+      itemName: model.name,
+      sizeGb: sizeGb,
+      confirmLabel: 'Proceed',
+      note: note.toString(),
+    );
   }
 
   Future<bool> _confirmLargeModel(double sizeGb) async {

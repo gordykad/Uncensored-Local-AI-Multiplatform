@@ -5,6 +5,7 @@ import 'package:http/http.dart' as http;
 import '../theme/app_colors.dart';
 import '../widgets/faithful/sonar.dart';
 import '../services/local_api_server_service.dart';
+import '../services/admin_activity_service.dart';
 
 class ApiEndpointsScreen extends StatefulWidget {
   const ApiEndpointsScreen({super.key});
@@ -164,6 +165,10 @@ class _ApiEndpointsScreenState extends State<ApiEndpointsScreen> {
             ),
             const SizedBox(height: 24),
 
+            // Remote Activity (ticket 24): the narrated drive log
+            _RemoteActivityCard(),
+            const SizedBox(height: 24),
+
             Text(
               'How to Access',
               style: TextStyle(color: context.text, fontSize: 18, fontWeight: FontWeight.bold),
@@ -301,6 +306,227 @@ class _ApiEndpointsScreenState extends State<ApiEndpointsScreen> {
           ),
         ],
       ),
+    );
+  }
+}
+
+/// Remote Activity (ticket 24): presence line + the narrated list of
+/// everything Astro has done through the admin API — reads included,
+/// no silent reads. The token itself never appears here.
+class _RemoteActivityCard extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    AdminActivityService? activity;
+    try {
+      activity = Get.find<AdminActivityService>();
+    } catch (_) {}
+    if (activity == null) return const SizedBox.shrink();
+    final svc = activity;
+
+    String ago(DateTime t) {
+      final d = DateTime.now().difference(t);
+      if (d.inSeconds < 5) return 'just now';
+      if (d.inSeconds < 60) return '${d.inSeconds}s ago';
+      if (d.inMinutes < 60) return '${d.inMinutes}m ago';
+      return '${d.inHours}h ago';
+    }
+
+    String clock(DateTime t) {
+      String two(int v) => v.toString().padLeft(2, '0');
+      return '${two(t.hour)}:${two(t.minute)}:${two(t.second)}';
+    }
+
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: context.bgPanel,
+        border: Border.all(color: context.border),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Obx(() {
+        final warm = svc.sessionWarm;
+        final last = svc.lastEventAt.value;
+        final events = svc.events.reversed.take(8).toList();
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Remote Activity',
+              style: TextStyle(
+                color: context.text,
+                fontSize: 15,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                Container(
+                  width: 8,
+                  height: 8,
+                  decoration: BoxDecoration(
+                    color: warm ? AppColors.green : context.textD,
+                    shape: BoxShape.circle,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    warm && last != null
+                        ? 'Astro connected — last action ${ago(last)}'
+                        : 'Astro is not connected.',
+                    style: TextStyle(color: context.textM, fontSize: 12),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            if (events.isEmpty)
+              Text(
+                'Nothing yet. When Astro drives, every action shows '
+                'here — reads included.',
+                style: TextStyle(color: context.textD, fontSize: 12, height: 1.5),
+              )
+            else
+              for (final e in events)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 4),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        clock(e.at),
+                        style: TextStyle(
+                          color: context.textD,
+                          fontSize: 11.5,
+                          fontFamily: 'monospace',
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          e.label,
+                          style: TextStyle(color: context.textM, fontSize: 12),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+          ],
+        );
+      }),
+    );
+  }
+}
+
+/// Remote Activity (ticket 24): presence line + the narrated history
+/// of Astro's admin actions. Reads are listed too — no silent reads.
+class _RemoteActivityCard extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    AdminActivityService? activity;
+    try {
+      activity = Get.find<AdminActivityService>();
+    } catch (_) {}
+    if (activity == null) return const SizedBox.shrink();
+    final svc = activity;
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: context.bgPanel,
+        border: Border.all(color: context.border),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Obx(() {
+        final events = svc.events.reversed.take(8).toList();
+        final last = svc.lastEventAt.value;
+        final warm = svc.sessionWarm;
+        var agoText = '';
+        if (last != null) {
+          final d = DateTime.now().difference(last);
+          if (d.inSeconds < 5) {
+            agoText = 'just now';
+          } else if (d.inSeconds < 60) {
+            agoText = '${d.inSeconds}s ago';
+          } else if (d.inMinutes < 60) {
+            agoText = '${d.inMinutes}m ago';
+          } else {
+            agoText = '${d.inHours}h ago';
+          }
+        }
+        String clock(DateTime t) =>
+            '${t.hour.toString().padLeft(2, '0')}:'
+            '${t.minute.toString().padLeft(2, '0')}:'
+            '${t.second.toString().padLeft(2, '0')}';
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Container(
+                  width: 8,
+                  height: 8,
+                  decoration: BoxDecoration(
+                    color: warm ? AppColors.green : context.textD,
+                    shape: BoxShape.circle,
+                  ),
+                ),
+                const SizedBox(width: 9),
+                Text(
+                  'Remote Activity',
+                  style: TextStyle(
+                    color: context.text,
+                    fontSize: 15,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                const Spacer(),
+                Text(
+                  warm ? 'Astro connected - $agoText' : 'Astro not connected',
+                  style: TextStyle(color: context.textM, fontSize: 11.5),
+                ),
+              ],
+            ),
+            const SizedBox(height: 6),
+            Text(
+              'Every action Astro takes through the admin API shows here '
+              'and as a toast on the chat page - reads included. No silent '
+              'reads.',
+              style: TextStyle(color: context.textM, fontSize: 12, height: 1.5),
+            ),
+            const SizedBox(height: 10),
+            if (events.isEmpty)
+              Text(
+                'Nothing yet.',
+                style: TextStyle(color: context.textD, fontSize: 12),
+              )
+            else
+              for (final e in events)
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 2.5),
+                  child: Row(
+                    children: [
+                      Text(
+                        clock(e.at),
+                        style: TextStyle(
+                          color: context.textD,
+                          fontSize: 11.5,
+                          fontFamily: 'monospace',
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          e.label,
+                          style: TextStyle(color: context.text, fontSize: 12.5),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+          ],
+        );
+      }),
     );
   }
 }

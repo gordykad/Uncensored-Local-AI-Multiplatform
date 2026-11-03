@@ -11,6 +11,7 @@ import '../services/chat_storage_service.dart';
 import '../services/local_api_server_service.dart';
 import '../services/wakelock_service.dart';
 import '../services/log_service.dart';
+import '../services/telemetry_service.dart';
 import '../services/background_optimizer_service.dart';
 import '../routes/app_routes.dart';
 
@@ -50,6 +51,10 @@ class _SplashScreenState extends State<SplashScreen> {
       setState(() => _status = 'Preparing local API...');
       log.info('Preparing local API...', source: 'Splash');
       await Get.find<LocalApiServerService>().init();
+
+      setState(() => _status = 'Starting telemetry...');
+      log.info('Starting telemetry...', source: 'Splash');
+      Get.find<TelemetryService>().init();
 
       setState(() => _status = 'Setting up background services...');
       log.info('Setting up background services...', source: 'Splash');
