@@ -12,7 +12,7 @@ workflows:
         - export-fetch
       vars:
         BUNDLE_ID: "com.seven.portableai"
-        XCODE_PROJECT: "ios/Runner.xcodeproj"
+        XCODE_WORKSPACE: "ios/Runner.xcworkspace"
         XCODE_SCHEME: "Runner"
     scripts:
       - name: Show toolchain versions
@@ -39,7 +39,7 @@ workflows:
       - name: Build IPA
         script: |
           xcode-project build-ipa \
-            --project "$XCODE_PROJECT" \
+            --workspace "$XCODE_WORKSPACE" \
             --scheme "$XCODE_SCHEME"
     artifacts:
       - build/ios/ipa/*.ipa
