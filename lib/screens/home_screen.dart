@@ -119,7 +119,7 @@ class _HomeScreenState extends State<HomeScreen> {
       _loggedBuild = true;
       try {
         Get.find<LogService>().info(
-            'Home build: size=${MediaQuery.of(context).size} desktop=$isDesktop',
+            'Home build: w=${MediaQuery.of(context).size.width} h=${MediaQuery.of(context).size.height} desktop=$isDesktop',
             source: 'UI');
       } catch (_) {}
     }
@@ -389,7 +389,10 @@ class _HomeScreenState extends State<HomeScreen> {
           top: false,
           child: Padding(
             padding: const EdgeInsets.fromLTRB(12, 8, 12, 10),
-            child: DockNav(
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                DockNav(
               selectedIndex: _mobileTabIndex,
               onSelect: (i) {
                 // Keyboard fix: switching tabs always drops the keyboard.
@@ -400,6 +403,8 @@ class _HomeScreenState extends State<HomeScreen> {
                 } catch (_) {}
                 setState(() => _mobileTabIndex = i);
               },
+                ),
+              ],
             ),
           ),
         ),

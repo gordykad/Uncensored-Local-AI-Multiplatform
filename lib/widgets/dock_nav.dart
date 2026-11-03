@@ -48,8 +48,10 @@ class _DockNavState extends State<DockNav> {
 
   @override
   Widget build(BuildContext context) {
-    return Center(
-      child: Listener(
+    // NO Center/Align root here: inside Scaffold.bottomNavigationBar an
+    // expanding widget takes the full screen height and starves the body
+    // (the 1.9.0 dock-only bug). The host centers the pill horizontally.
+    return Listener(
         onPointerMove: (e) => setState(() => _pointerX = e.localPosition.dx),
         onPointerDown: (e) => setState(() => _pointerX = e.localPosition.dx),
         onPointerUp: (_) => setState(() => _pointerX = null),
@@ -79,8 +81,7 @@ class _DockNavState extends State<DockNav> {
             ],
           ),
         ),
-      ),
-    );
+      );
   }
 
   Widget _cell(int i) {
