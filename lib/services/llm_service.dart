@@ -223,17 +223,29 @@ class LlmService extends GetxService {
       final threads = storage.threadCount > 0
           ? storage.threadCount
           : (Platform.numberOfProcessors > 4 ? 4 : 0);
+      // B2 (ticket 10): flash attention ON for CPU loads — the named
+      // prefill lever vs the 1.50 tok/s / TTFT 8.0s / 22.3 tok/s prefill
+      // baseline measured in B1. GPU backends keep auto.
+      final flash = parsedBackend == GpuBackend.cpu
+          ? FlashAttention.enabled
+          : FlashAttention.auto;
       final params = ModelParams(
         contextSize: contextSize,
         gpuLayers: effectiveGpuLayers,
         preferredBackend: parsedBackend,
         numberOfThreads: threads,
         numberOfThreadsBatch: threads,
+        flashAttention: flash,
       );
 
       log?.info('Backend=$parsedBackend, GPU layers=$effectiveGpuLayers (stored $userGpuLayers), ctx=$contextSize, threads=$threads', source: 'LLM');
 
-      await _engine!.loadModel(path, modelParams: params);
+      // B2: loadModel() is deprecated in llamadart 0.17.x — setModel is
+      // the migration target (same fresh-engine-per-load pattern).
+      await _engine!.setModel(
+        LlamaModel(ModelSource.path(path)),
+        params: params,
+      );
       progressTimer.cancel();
 
       if (_loadingCancelled) {

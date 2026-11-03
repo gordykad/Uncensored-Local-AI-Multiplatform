@@ -1,7 +1,7 @@
 name: portable_ai_flutter
 description: "Portable AI — Run uncensored local LLMs natively on any device."
 publish_to: 'none'
-version: 1.4.1+10
+version: 1.5.0+11
 
 environment:
   sdk: ^3.11.4
@@ -11,7 +11,8 @@ dependencies:
     sdk: flutter
 
   # ── LLM Engine ──────────────────────────────────────────────────
-  llamadart: ^0.6.10
+  llamadart: ^0.17.5
+  llamadart_llama_cpp_flutter: ^0.17.1 # Apple companion: carries the iOS/macOS llama.cpp runtime (required by llamadart 0.17.x hooks)
 
   # ── State Management ────────────────────────────────────────────
   get: ^4.7.2                      # GetX - controllers, routing, state
