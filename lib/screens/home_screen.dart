@@ -870,7 +870,7 @@ class _HomeScreenState extends State<HomeScreen> {
     // the orb is the centerpiece hero, the app icon does NOT appear here.
     return Stack(
       children: [
-        const Positioned.fill(child: KineticGrid()),
+        const Positioned.fill(child: KineticGrid(subtle: true)),
         Center(
           child: Padding(
             padding: const EdgeInsets.all(32),
@@ -933,17 +933,9 @@ class _HomeScreenState extends State<HomeScreen> {
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.end,
           children: [
-            // Thinking Orb — the composer itself (faithful port, zero
-            // changes per founder ruling; 52px per Kai's re-port order)
-            Padding(
-              padding: const EdgeInsets.only(left: 8, bottom: 2),
-              child: Obx(
-                () => ThinkingOrb(
-                  size: 52,
-                  thinking: _chatCtrl.isGenerating.value,
-                ),
-              ),
-            ),
+            // Composer orb REMOVED (Kai, 2026-11-03: "2 orbs" — the
+            // welcome hero is the one orb; the composer stays clean).
+            const SizedBox(width: 8),
             // Text field — #24 rotating placeholder while empty
             Expanded(
               child: Stack(

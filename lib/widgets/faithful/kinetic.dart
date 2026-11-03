@@ -24,7 +24,12 @@ class _Ripple {
 }
 
 class KineticGrid extends StatefulWidget {
-  const KineticGrid({super.key});
+  const KineticGrid({super.key, this.subtle = false});
+
+  /// Subtle mode (Kai, 2026-11-03: full-bleed welcome grid was "a little
+  /// much"): static lattice only — no pointer warp, no tap ripples,
+  /// lines/nodes at roughly half alpha. Mechanics otherwise identical.
+  final bool subtle;
 
   @override
   State<KineticGrid> createState() => _KineticGridState();
@@ -70,15 +75,20 @@ class _KineticGridState extends State<KineticGrid> with SingleTickerProviderStat
   Widget build(BuildContext context) {
     return GestureDetector(
       behavior: HitTestBehavior.translucent,
-      onPanStart: (d) => _pointerTarget = d.localPosition,
-      onPanUpdate: (d) => _pointerTarget = d.localPosition,
-      onTapDown: (d) => _ripples.add(_Ripple(d.localPosition, _t)),
+      onPanStart:
+          widget.subtle ? null : (d) => _pointerTarget = d.localPosition,
+      onPanUpdate:
+          widget.subtle ? null : (d) => _pointerTarget = d.localPosition,
+      onTapDown: widget.subtle
+          ? null
+          : (d) => _ripples.add(_Ripple(d.localPosition, _t)),
       child: CustomPaint(
         painter: _KineticPainter(
           repaint: _tick,
           t: () => _t,
-          pointer: () => _pointer,
-          ripples: () => _ripples,
+          pointer: () => widget.subtle ? const Offset(-9999, -9999) : _pointer,
+          ripples: () => widget.subtle ? const <_Ripple>[] : _ripples,
+          subtle: widget.subtle,
         ),
         size: Size.infinite,
       ),
@@ -87,6 +97,7 @@ class _KineticGridState extends State<KineticGrid> with SingleTickerProviderStat
 }
 
 class _KineticPainter extends CustomPainter {
+  final bool subtle;
   final double Function() t;
   final Offset Function() pointer;
   final List<_Ripple> Function() ripples;
@@ -95,6 +106,7 @@ class _KineticPainter extends CustomPainter {
     required this.t,
     required this.pointer,
     required this.ripples,
+    required this.subtle,
   }) : super(repaint: repaint);
 
   static double _smooth(double x) => x * x * (3 - 2 * x);
@@ -171,8 +183,8 @@ class _KineticPainter extends CustomPainter {
       }
     }
 
-    const baseLine = Color(0x21FFFFFF); // white a .13
-    const baseNode = Color(0x33FFFFFF); // white a .2
+    final baseLine = subtle ? const Color(0x0FFFFFFF) : const Color(0x21FFFFFF); // white a .13 (.06 subtle)
+    final baseNode = subtle ? const Color(0x14FFFFFF) : const Color(0x33FFFFFF); // white a .2 (.08 subtle)
     const activeLine = Color(0xE69333EA); // purple a .9
     const activeNode = Color(0xFF9333EA);
 

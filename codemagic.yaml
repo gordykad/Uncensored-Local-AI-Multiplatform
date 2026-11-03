@@ -19,6 +19,8 @@ workflows:
         script: |
           flutter --version
           dart --version
+      - name: Enable Swift Package Manager (llamadart 0.17.x companion is SPM-only)
+        script: flutter config --enable-swift-package-manager
       - name: Get Flutter packages
         script: flutter pub get
       - name: Initialize keychain
@@ -49,16 +51,28 @@ workflows:
           WORK=$(mktemp -d)
           unzip -q "$IPA_ABS" -d "$WORK"
           APP="$WORK/Payload/Runner.app"
-          FW="$APP/Frameworks/llamadart.framework"
           echo "App MinimumOSVersion: $(/usr/libexec/PlistBuddy -c 'Print :MinimumOSVersion' "$APP/Info.plist")"
-          echo "llamadart MinimumOSVersion BEFORE: $(/usr/libexec/PlistBuddy -c 'Print :MinimumOSVersion' "$FW/Info.plist")"
-          /usr/libexec/PlistBuddy -c "Set :MinimumOSVersion 16.4" "$FW/Info.plist"
-          echo "llamadart MinimumOSVersion AFTER: $(/usr/libexec/PlistBuddy -c 'Print :MinimumOSVersion' "$FW/Info.plist")"
+          echo "Frameworks in IPA:"
+          ls "$APP/Frameworks"
           IDENTITY=$(security find-identity -v -p codesigning | grep "Apple Distribution" | head -1 | awk -F'"' '{print $2}')
           echo "Signing identity: $IDENTITY"
           test -n "$IDENTITY"
           codesign -d --entitlements :- "$APP" > "$WORK/ent.plist"
-          codesign -f -s "$IDENTITY" "$FW"
+          for FW in "$APP/Frameworks/"*.framework; do
+            [ -d "$FW" ] || continue
+            PLIST="$FW/Info.plist"
+            if /usr/libexec/PlistBuddy -c 'Print :MinimumOSVersion' "$PLIST" >/dev/null 2>&1; then
+              CUR=$(/usr/libexec/PlistBuddy -c 'Print :MinimumOSVersion' "$PLIST")
+              echo "$(basename "$FW") MinimumOSVersion: $CUR"
+              if [ "$CUR" != "16.4" ]; then
+                /usr/libexec/PlistBuddy -c "Set :MinimumOSVersion 16.4" "$PLIST"
+                echo "$(basename "$FW") patched to 16.4; re-signing"
+                codesign -f -s "$IDENTITY" "$FW"
+              fi
+            else
+              echo "$(basename "$FW") has no MinimumOSVersion key; skipped"
+            fi
+          done
           codesign -f -s "$IDENTITY" --entitlements "$WORK/ent.plist" "$APP"
           codesign --verify --deep --strict --verbose=2 "$APP"
           rm -f "$IPA_ABS"
