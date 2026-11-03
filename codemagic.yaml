@@ -41,6 +41,29 @@ workflows:
           xcode-project build-ipa \
             --workspace "$XCODE_WORKSPACE" \
             --scheme "$XCODE_SCHEME"
+      - name: Patch llamadart framework minimum OS (ITMS-90208)
+        script: |
+          IPA=$(ls build/ios/ipa/*.ipa | head -1)
+          IPA_ABS="$PWD/$IPA"
+          echo "Patching $IPA_ABS"
+          WORK=$(mktemp -d)
+          unzip -q "$IPA_ABS" -d "$WORK"
+          APP="$WORK/Payload/Runner.app"
+          FW="$APP/Frameworks/llamadart.framework"
+          echo "App MinimumOSVersion: $(/usr/libexec/PlistBuddy -c 'Print :MinimumOSVersion' "$APP/Info.plist")"
+          echo "llamadart MinimumOSVersion BEFORE: $(/usr/libexec/PlistBuddy -c 'Print :MinimumOSVersion' "$FW/Info.plist")"
+          /usr/libexec/PlistBuddy -c "Set :MinimumOSVersion 16.4" "$FW/Info.plist"
+          echo "llamadart MinimumOSVersion AFTER: $(/usr/libexec/PlistBuddy -c 'Print :MinimumOSVersion' "$FW/Info.plist")"
+          IDENTITY=$(security find-identity -v -p codesigning | grep "Apple Distribution" | head -1 | awk -F'"' '{print $2}')
+          echo "Signing identity: $IDENTITY"
+          test -n "$IDENTITY"
+          codesign -d --entitlements :- "$APP" > "$WORK/ent.plist"
+          codesign -f -s "$IDENTITY" "$FW"
+          codesign -f -s "$IDENTITY" --entitlements "$WORK/ent.plist" "$APP"
+          codesign --verify --deep --strict --verbose=2 "$APP"
+          rm -f "$IPA_ABS"
+          (cd "$WORK" && zip -qry "$IPA_ABS" Payload)
+          ls -la "$IPA_ABS"
     artifacts:
       - build/ios/ipa/*.ipa
       - /tmp/xcodebuild_logs/*.log
