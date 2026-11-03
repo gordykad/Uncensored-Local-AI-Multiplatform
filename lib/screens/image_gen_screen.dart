@@ -507,8 +507,14 @@ class _ImageGenScreenState extends State<ImageGenScreen>
               child: Stack(alignment: Alignment.centerLeft, children: [
                 TextField(
                   controller: _input,
-                  style: const TextStyle(
-                      color: AppColors.darkText, fontSize: 14),
+                  style: TextStyle(
+                      color: _dissolving == null
+                          ? AppColors.darkText
+                          : Colors.transparent,
+                      fontSize: 14),
+                  cursorColor: _dissolving == null
+                      ? AppColors.accent
+                      : Colors.transparent,
                   decoration: const InputDecoration(
                     border: InputBorder.none,
                     isDense: true,
@@ -563,7 +569,7 @@ class _ImageGenScreenState extends State<ImageGenScreen>
         if (_dissolving != null)
           Positioned.fill(
             child: Padding(
-              padding: const EdgeInsets.fromLTRB(18, 4, 60, 4),
+              padding: const EdgeInsets.fromLTRB(19, 15, 60, 4),
               child: DisintegratingText(
                 text: _dissolving!,
                 color: AppColors.darkText,
@@ -821,7 +827,7 @@ class _ImageGenScreenState extends State<ImageGenScreen>
                           checking = true;
                           error = null;
                         });
-                        final (err, endpoint) =
+                        final (err, endpoint, fnIndex) =
                             await _svc.validate(lane, link.text.trim());
                         if (err != null) {
                           setSheet(() {
@@ -836,6 +842,7 @@ class _ImageGenScreenState extends State<ImageGenScreen>
                           link: link.text.trim(),
                           lane: lane,
                           endpoint: endpoint.isEmpty ? '/generate' : endpoint,
+                          fnIndex: fnIndex,
                           createdMs: DateTime.now().millisecondsSinceEpoch,
                         );
                         _svc.addEntry(e);

@@ -5,6 +5,7 @@ import 'package:flutter_animate/flutter_animate.dart';
 import '../theme/app_colors.dart';
 import '../controllers/model_controller.dart';
 import '../services/model_manager.dart';
+import '../services/model_pins_service.dart';
 import '../models/ai_model_info.dart';
 import '../widgets/model_card.dart';
 import '../widgets/faithful/gravity.dart';
@@ -40,6 +41,19 @@ class _ModelLibraryBody extends StatefulWidget {
 
 class _ModelLibraryBodyState extends State<_ModelLibraryBody> {
   _Filter _filter = _Filter.all;
+  // Ticket 30: fleet pins (config-fetched) + founder pin flags.
+  final _pinsSvc = ModelPinsService();
+  List<AiModelInfo> _pinned = [];
+  Set<String> _flagged = {};
+
+  @override
+  void initState() {
+    super.initState();
+    _flagged = _pinsSvc.flaggedPins();
+    _pinsSvc.fetchPinned().then((p) {
+      if (mounted) setState(() => _pinned = p);
+    });
+  }
   final _searchCtrl = TextEditingController();
   String _query = '';
 
@@ -204,6 +218,11 @@ class _ModelLibraryBodyState extends State<_ModelLibraryBody> {
             return ListView(
               padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
               children: [
+                // ── Pinned for the fleet (ticket 30) ─────
+                if (_filter == _Filter.all && _query.isEmpty)
+                  ..._pinnedSection(context, ctrl, manager, allCatalog,
+                      downloaded),
+
                 // ── Local files not in catalog ──────────
                 if (_filter == _Filter.all ||
                     _filter == _Filter.downloaded) ...[
@@ -230,7 +249,11 @@ class _ModelLibraryBodyState extends State<_ModelLibraryBody> {
 
                   return Column(
                     children: [
-                      ModelCard(
+                      GestureDetector(
+                        onLongPress: model.hasRemoteUrl
+                            ? () => _pinSheet(context, model)
+                            : null,
+                        child: ModelCard(
                         model: model,
                         isDownloaded: isDl,
                         isCurrentlyDownloading: isActiveDownload,
@@ -255,6 +278,7 @@ class _ModelLibraryBodyState extends State<_ModelLibraryBody> {
                             : null,
                         onCancelLoad: () => ctrl.cancelLoadModel(),
                         onUnload: () => ctrl.unloadCurrentModel(),
+                        ),
                       ),
                     ],
                   ).animate().fadeIn(
@@ -269,6 +293,95 @@ class _ModelLibraryBodyState extends State<_ModelLibraryBody> {
           }),
         ),
       ],
+    );
+  }
+
+  List<Widget> _pinnedSection(
+    BuildContext context,
+    ModelController ctrl,
+    ModelManager manager,
+    List<AiModelInfo> catalog,
+    List<String> downloaded,
+  ) {
+    final fresh = _pinned
+        .where((p) => !catalog.any((m) => m.filename == p.filename))
+        .toList();
+    if (fresh.isEmpty) return const [];
+    return [
+      _sectionTitle(context, 'Pinned'),
+      const SizedBox(height: 12),
+      for (final p in fresh)
+        ModelCard(
+          model: p,
+          isDownloaded: downloaded.contains(p.filename),
+          isCurrentlyDownloading: manager.isDownloading(p.filename),
+          downloadState: manager.getDownloadState(p.filename),
+          isLoaded: ctrl.selectedModelFilename.value == p.filename &&
+              ctrl.isModelLoaded,
+          isLoadingModel: ctrl.loadingModelFilename.value == p.filename,
+          loadingStatusMsg: ctrl.loadingStatusMsg.value,
+          loadingProgress: ctrl.loadingProgress.value,
+          onDownload: () => ctrl.downloadModel(p),
+          onCancelDownload: () => ctrl.cancelDownload(p.filename),
+          onLoad: () => ctrl.loadModel(p.filename),
+          onDelete: () => _confirmDelete(context, ctrl, p),
+          onRemoveCustom: () => _confirmRemoveCustom(context, ctrl, p),
+          onAddLink: null,
+          onCancelLoad: () => ctrl.cancelLoadModel(),
+          onUnload: () => ctrl.unloadCurrentModel(),
+        ),
+      const SizedBox(height: 8),
+    ];
+  }
+
+  void _pinSheet(BuildContext context, AiModelInfo model) {
+    final isPinned = _flagged.contains(model.filename);
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: context.bgPanel,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
+      ),
+      builder: (sheetCtx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: Icon(
+                isPinned ? Icons.push_pin : Icons.push_pin_outlined,
+                color: AppColors.accent,
+              ),
+              title: Text(
+                isPinned ? 'Unpin from the fleet' : 'Pin for everyone',
+                style: TextStyle(color: context.text),
+              ),
+              subtitle: Text(
+                isPinned
+                    ? 'The offer leaves the fleet list when the shared config updates. Downloaded copies stay.'
+                    : 'Everyone with MiniX sees this model in a Pinned section and chooses for themselves whether to download it.',
+                style: TextStyle(color: context.textM, fontSize: 12),
+              ),
+              onTap: () async {
+                Navigator.of(sheetCtx).pop();
+                await _pinsSvc.setFlagged(model.filename, !isPinned);
+                setState(() => _flagged = _pinsSvc.flaggedPins());
+                if (!context.mounted) return;
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    backgroundColor: context.bgPanel,
+                    content: Text(
+                      isPinned
+                          ? 'Unpinned here. It leaves the fleet list when the config updates.'
+                          : 'Pin flagged. It goes live for the fleet when the shared config updates.',
+                      style: TextStyle(color: context.text),
+                    ),
+                  ),
+                );
+              },
+            ),
+          ],
+        ),
+      ),
     );
   }
 

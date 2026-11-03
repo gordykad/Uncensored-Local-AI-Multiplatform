@@ -10,6 +10,7 @@
 // flags an entry locally and the flag is mirrored into that config.
 import 'dart:async';
 import 'dart:convert';
+import 'dart:math';
 
 import 'package:hive/hive.dart';
 import 'package:http/http.dart' as http;
@@ -120,25 +121,25 @@ class ImageGenService {
 
   /// Add-time validation. Returns an error string, or the resolved gradio
   /// endpoint path for owner entries.
-  Future<(String?, String)> validate(String lane, String link) async {
+  Future<(String?, String, int)> validate(String lane, String link) async {
     if (lane == 'runpod') {
       try {
         final r = await http
             .get(Uri.parse('https://huggingface.co/api/models/${link.trim()}'))
             .timeout(const Duration(seconds: 15));
         if (r.statusCode != 200) {
-          return ('Hugging Face repo not found (HTTP ${r.statusCode})', '');
+          return ('Hugging Face repo not found (HTTP ${r.statusCode})', '', 0);
         }
         final d = jsonDecode(r.body) as Map<String, dynamic>;
         final sibs = (d['siblings'] as List? ?? [])
             .map((s) => (s as Map)['rfilename']?.toString() ?? '')
             .toList();
         if (!sibs.any((f) => f.endsWith('.gguf'))) {
-          return ('That repo has no .gguf file in it', '');
+          return ('That repo has no .gguf file in it', '', 0);
         }
-        return (null, '');
+        return (null, '', 0);
       } catch (e) {
-        return ('Could not reach Hugging Face: $e', '');
+        return ('Could not reach Hugging Face: $e', '', 0);
       }
     }
     // owner lane: probe the Space's gradio API
@@ -149,21 +150,23 @@ class ImageGenService {
           .get(Uri.parse('${probe.gradioBase}/gradio_api/info'))
           .timeout(const Duration(seconds: 20));
       if (r.statusCode != 200) {
-        return ('Space API answered HTTP ${r.statusCode} - is it running?', '');
+        return ('Space API answered HTTP ${r.statusCode} - is it running?', '', 0);
       }
       final d = jsonDecode(r.body) as Map<String, dynamic>;
       final named = (d['named_endpoints'] as Map?) ?? {};
-      if (named.isEmpty) return ('That Space exposes no API endpoints', '');
-      final ep = named.containsKey('/generate')
-          ? '/generate'
-          : named.keys.first.toString();
-      return (null, ep);
+      if (named.isEmpty) return ('That Space exposes no API endpoints', '', 0);
+      final names = named.keys.map((k) => k.toString()).toList();
+      final ep = names.contains('/generate') ? '/generate' : names.first;
+      return (null, ep, names.indexOf(ep));
     } catch (e) {
-      return ('Could not reach that Space: $e', '');
+      return ('Could not reach that Space: $e', '', 0);
     }
   }
 
-  /// Lane B generation: Gradio queue join -> stream -> file bytes.
+  /// Lane B generation: the classic Gradio queue protocol - join
+  /// with fn_index + session_hash, then read the queue/data stream.
+  /// Verified live against a Gradio 6 Space on 2026-11-03 (the /call
+  /// route and a session-less join both fail on current Gradio).
   Future<ImageGenResult> generateOwner(
     ImageEntry e, {
     required String prompt,
@@ -172,6 +175,9 @@ class ImageGenService {
     void Function(String phase)? onPhase,
   }) async {
     final base = e.gradioBase;
+    final rng = Random.secure();
+    final sessionHash = List.generate(
+        16, (_) => rng.nextInt(256).toRadixString(16).padLeft(2, '0')).join();
     onPhase?.call('Joining the queue');
     final join = await http
         .post(
@@ -179,60 +185,76 @@ class ImageGenService {
           headers: {'Content-Type': 'application/json'},
           body: jsonEncode({
             'data': [prompt, size, steps, 0, true, 1.0],
+            'fn_index': e.fnIndex,
+            'session_hash': sessionHash,
           }),
         )
         .timeout(const Duration(seconds: 30));
     if (join.statusCode != 200) {
-      throw Exception('Queue join failed (HTTP ${join.statusCode})');
+      throw Exception(
+          'Space refused the job (HTTP ${join.statusCode}): ${_short(join.body)}');
     }
-    final eventId =
-        (jsonDecode(join.body) as Map<String, dynamic>)['event_id'];
-    if (eventId == null) throw Exception('Queue join returned no event id');
 
     onPhase?.call('In queue');
-    final req = http.Request(
-        'GET', Uri.parse('$base/gradio_api/queue/data?session_hash=$eventId'));
-    final resp = await http.Client()
-        .send(req)
-        .timeout(const Duration(seconds: 30));
-    final lines = resp.stream
-        .transform(utf8.decoder)
-        .transform(const LineSplitter())
-        .timeout(const Duration(minutes: 10));
-    await for (final line in lines) {
-      if (!line.startsWith('data:')) continue;
-      final payload = line.substring(5).trim();
-      if (payload.isEmpty || payload == 'null') continue;
-      Map<String, dynamic> m;
-      try {
-        m = jsonDecode(payload) as Map<String, dynamic>;
-      } catch (_) {
-        continue;
+    final client = http.Client();
+    try {
+      final req = http.Request(
+        'GET',
+        Uri.parse('$base/gradio_api/queue/data?session_hash=$sessionHash'),
+      );
+      final resp =
+          await client.send(req).timeout(const Duration(seconds: 30));
+      if (resp.statusCode != 200) {
+        throw Exception('Queue stream failed (HTTP ${resp.statusCode})');
       }
-      switch (m['msg']) {
-        case 'process_starts':
-          onPhase?.call('Generating');
-        case 'process_generating':
-          onPhase?.call('Generating');
-        case 'process_completed':
-          final out = (m['output'] as Map<String, dynamic>?)?['data'] as List?;
-          if (out == null || out.isEmpty) {
-            throw Exception('Generation finished with no image');
-          }
-          final file = Map<String, dynamic>.from(out[0] as Map);
-          final seed =
-              out.length > 1 && out[1] is num ? (out[1] as num).toInt() : null;
-          onPhase?.call('Fetching image');
-          final bytes = await _fetchGradioFile(base, file);
-          return ImageGenResult(bytes, seed);
-        case 'queue_full':
-          throw Exception('That Space queue is full - try again shortly');
-        case 'process_error':
-        case 'error':
-          throw Exception('That Space reported an error');
+      final lines = resp.stream
+          .transform(utf8.decoder)
+          .transform(const LineSplitter())
+          .timeout(const Duration(minutes: 10));
+      await for (final line in lines) {
+        if (!line.startsWith('data:')) continue;
+        final payload = line.substring(5).trim();
+        if (payload.isEmpty) continue;
+        Map<String, dynamic> msg;
+        try {
+          msg = jsonDecode(payload) as Map<String, dynamic>;
+        } catch (_) {
+          continue;
+        }
+        switch (msg['msg']) {
+          case 'estimation':
+            final rank = msg['rank'];
+            onPhase?.call(rank is num && rank > 0
+                ? 'In queue (position ${rank.toInt() + 1})'
+                : 'In queue');
+          case 'process_starts':
+            onPhase?.call('Generating');
+          case 'process_completed':
+            if (msg['success'] != true) {
+              final err = (msg['output'] as Map?)?['error'];
+              throw Exception(err != null
+                  ? 'That Space reported an error: $err'
+                  : 'That Space failed to generate. Its backend may be down.');
+            }
+            final out = (msg['output'] as Map)['data'] as List;
+            if (out.isEmpty) {
+              throw Exception('Generation finished with no image');
+            }
+            final file = Map<String, dynamic>.from(out[0] as Map);
+            final seed =
+                out.length > 1 && out[1] is num ? (out[1] as num).toInt() : null;
+            onPhase?.call('Fetching image');
+            final bytes = await _fetchGradioFile(base, file);
+            return ImageGenResult(bytes, seed);
+          case 'unexpected_error':
+            throw Exception(
+                'That Space reported an error: ${msg['message'] ?? 'unknown'}');
+        }
       }
+    } finally {
+      client.close();
     }
-    throw Exception('The stream ended before the image arrived');
+    throw Exception('The queue stream ended before the image arrived');
   }
 
   Future<List<int>> _fetchGradioFile(

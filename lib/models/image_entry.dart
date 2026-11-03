@@ -8,6 +8,7 @@ class ImageEntry {
   final String link; // Space URL (owner) or HF GGUF repo id (runpod)
   final String lane; // 'owner' | 'runpod'
   final String endpoint; // gradio endpoint path for owner entries
+  final int fnIndex; // position of the endpoint in the Space's API info
   final bool pinned;
   final bool remote; // came from the shared config (pinned by Kai)
   final int createdMs;
@@ -18,6 +19,7 @@ class ImageEntry {
     required this.link,
     required this.lane,
     this.endpoint = '/generate',
+    this.fnIndex = 0,
     this.pinned = false,
     this.remote = false,
     required this.createdMs,
@@ -47,6 +49,7 @@ class ImageEntry {
         'link': link,
         'lane': lane,
         'endpoint': endpoint,
+        'fnIndex': fnIndex,
         'pinned': pinned,
         'createdMs': createdMs,
       };
@@ -57,6 +60,7 @@ class ImageEntry {
         link: m['link']?.toString() ?? '',
         lane: m['lane']?.toString() ?? 'owner',
         endpoint: m['endpoint']?.toString() ?? '/generate',
+        fnIndex: (m['fnIndex'] as num?)?.toInt() ?? 0,
         pinned: m['pinned'] == true,
         remote: remote,
         createdMs: (m['createdMs'] as num?)?.toInt() ?? 0,
