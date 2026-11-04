@@ -766,8 +766,8 @@ class _ImageGenScreenState extends State<ImageGenScreen>
               style: const TextStyle(color: AppColors.darkText, fontSize: 14),
               decoration: InputDecoration(
                 labelText: lane == 'runpod'
-                    ? 'Hugging Face repo (user/model-GGUF)'
-                    : 'Space link (huggingface.co/spaces/...)',
+                    ? 'HF repo - paste the full link or user/model'
+                    : 'Space - paste the full link or user/space',
                 labelStyle:
                     const TextStyle(color: AppColors.darkTextM, fontSize: 13),
                 enabledBorder: const UnderlineInputBorder(
@@ -820,7 +820,8 @@ class _ImageGenScreenState extends State<ImageGenScreen>
                         final e = ImageEntry(
                           id: 'e${DateTime.now().millisecondsSinceEpoch}',
                           name: name.text.trim(),
-                          link: link.text.trim(),
+                          link: ImageGenService.normalizeLink(
+                              lane, link.text),
                           lane: lane,
                           endpoint: endpoint.isEmpty ? '/generate' : endpoint,
                           fnIndex: fnIndex,

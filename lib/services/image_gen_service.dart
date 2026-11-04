@@ -119,9 +119,64 @@ class ImageGenService {
     }
   }
 
+  /// Link paste normalization (Kai's order 2026-11-04): whatever shape the
+  /// paste arrives in - a full huggingface.co URL, a bare user/model path,
+  /// a URL with a /tree/... tail - it becomes the canonical form the
+  /// validator, the store and the worker all expect.
+  static String normalizeRepoLink(String raw) {
+    var l = raw.trim();
+    l = l.replaceFirst(RegExp(r'^https?://'), '');
+    l = l.replaceFirst(RegExp(r'^(www\.)?huggingface\.co/'), '');
+    l = l.replaceFirst(RegExp(r'^api/models/'), '');
+    for (final cut in ['/tree/', '/blob/', '/resolve/']) {
+      final i = l.indexOf(cut);
+      if (i > 0) l = l.substring(0, i);
+    }
+    if (l.contains('?')) l = l.split('?').first;
+    if (l.contains('#')) l = l.split('#').first;
+    while (l.endsWith('/')) {
+      l = l.substring(0, l.length - 1);
+    }
+    return l;
+  }
+
+  static String normalizeSpaceLink(String raw) {
+    var l = raw.trim();
+    if (!l.contains('huggingface.co') && !l.contains('.hf.space')) {
+      // Bare user/space paste becomes the canonical Space page URL.
+      final parts = l
+          .replaceFirst(RegExp(r'^https?://'), '')
+          .split('/')
+          .where((p) => p.isNotEmpty)
+          .toList();
+      if (parts.length == 2) {
+        return 'https://huggingface.co/spaces/${parts[0]}/${parts[1]}';
+      }
+      return l;
+    }
+    if (!l.startsWith('http')) l = 'https://$l';
+    if (l.contains('?')) l = l.split('?').first;
+    if (l.contains('#')) l = l.split('#').first;
+    while (l.endsWith('/')) {
+      l = l.substring(0, l.length - 1);
+    }
+    final sp = l.indexOf('/spaces/');
+    if (sp >= 0) {
+      final rest = l.substring(sp + '/spaces/'.length).split('/');
+      if (rest.length > 2) {
+        l = l.substring(0, sp + '/spaces/'.length) + '${rest[0]}/${rest[1]}';
+      }
+    }
+    return l;
+  }
+
+  static String normalizeLink(String lane, String raw) =>
+      lane == 'runpod' ? normalizeRepoLink(raw) : normalizeSpaceLink(raw);
+
   /// Add-time validation. Returns an error string, or the resolved gradio
   /// endpoint path for owner entries.
   Future<(String?, String, int)> validate(String lane, String link) async {
+    link = normalizeLink(lane, link);
     if (lane == 'runpod') {
       try {
         final r = await http
@@ -326,7 +381,7 @@ class ImageGenService {
               'height': height,
               'steps': steps,
               'seed': 0,
-              'model': e.link,
+              'model': normalizeRepoLink(e.link),
             },
           }),
         )
