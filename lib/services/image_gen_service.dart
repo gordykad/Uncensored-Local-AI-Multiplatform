@@ -134,8 +134,24 @@ class ImageGenService {
         final sibs = (d['siblings'] as List? ?? [])
             .map((s) => (s as Map)['rfilename']?.toString() ?? '')
             .toList();
-        if (!sibs.any((f) => f.endsWith('.gguf'))) {
-          return ('That repo has no .gguf file in it', '', 0);
+        // Lane A backends: a GGUF diffusion model (Qwen graph) or a
+        // standalone SDXL checkpoint - a .safetensors that is not one of
+        // the diffusers-layout parts. The worker routes by the same rule.
+        const skipPrefixes = [
+          'text_encoders/',
+          'text_encoder/',
+          'text_encoder_2/',
+          'vae/',
+          'unet/',
+          'loras/',
+        ];
+        final hasGguf = sibs.any((f) => f.endsWith('.gguf'));
+        final hasCheckpoint = sibs.any((f) =>
+            f.endsWith('.safetensors') &&
+            !skipPrefixes.any((p) => f.startsWith(p)));
+        if (!hasGguf && !hasCheckpoint) {
+          return ('That repo has no .gguf model and no standalone '
+              '.safetensors checkpoint in it', '', 0);
         }
         return (null, '', 0);
       } catch (e) {
