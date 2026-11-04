@@ -555,11 +555,20 @@ class _HomeScreenState extends State<HomeScreen> {
                     : null;
                 final loaded = _llm.isLoaded.value;
                 final isLoading = _llm.isLoadingModel.value;
+                // Ticket 31: a selected remote source is what answers,
+                // so the header names it (1.10.0/1.10.1 showed "No model
+                // selected" + red dot while a mesh seat was answering).
+                final remote = _modelCtrl.selectedRemote.value;
+                final remoteOn =
+                    remote != null && ImageGenService().connectivityOn;
                 final label = isLoading
                     ? 'Loading...'
+                    : remoteOn
+                    ? (remote['label'] as String)
                     : loaded
                     ? (info?.name ?? fname ?? 'Model')
                     : 'No model selected';
+                final active = loaded || remoteOn;
 
                 return GestureDetector(
                   onTap: () => _showModelPicker(context),
@@ -575,21 +584,29 @@ class _HomeScreenState extends State<HomeScreen> {
                           shape: BoxShape.circle,
                           color: isLoading
                               ? AppColors.orange
+                              : remoteOn
+                              ? AppColors.accent
                               : loaded
                               ? AppColors.green
                               : AppColors.red,
                         ),
                       ),
                       Flexible(
-                        child: VelocityText(
-                          text: label,
-                          scroll: _scrollController,
+                        // The velocity-reactive label is OUT of the header
+                        // (Kai, 2026-11-04: its scroll animation rendered
+                        // the label flying diagonally out of the bar).
+                        // Plain static text now; the widget itself stays
+                        // in the faithful library for other surfaces.
+                        child: Text(
+                          label,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
                           style: TextStyle(
                             fontSize: 14,
-                            fontWeight: loaded
+                            fontWeight: active
                                 ? FontWeight.w600
                                 : FontWeight.w500,
-                            color: loaded ? context.text : context.textD,
+                            color: active ? context.text : context.textD,
                           ),
                         ),
                       ),
@@ -618,26 +635,94 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   void _showModelPicker(BuildContext context) {
-    final downloaded = _modelCtrl.downloadedModels;
-    if (downloaded.isEmpty) {
-      // No models — nudge user to Models tab
-      setState(() => _mobileTabIndex = 1);
-      return;
+    // #5 Model Picker (faithful port): source rail + searchable list.
+    // Ticket 31 seats ride the same sheet (Kai, 2026-11-04: the header
+    // picker showed only local models while the mesh did the work).
+    // Remote entries come from the mesh service's last-good cache,
+    // which the Models tab keeps warm; opening the picker also kicks
+    // a refresh for next time.
+    final entries = <PickerEntry>[];
+    final actions = <String, VoidCallback>{};
+    void addEntry(
+      String source,
+      String name,
+      String meta,
+      VoidCallback act,
+    ) {
+      entries.add(PickerEntry(source, name, meta));
+      actions['$source|$name'] = act;
     }
 
-    // #5 Model Picker (faithful port): source rail + searchable list.
-    final nameByFilename = <String, String>{};
-    final entries = <PickerEntry>[];
-    for (final filename in downloaded) {
+    for (final filename in _modelCtrl.downloadedModels) {
       final info = _modelCtrl.getModelInfo(filename);
       final name = info?.name ?? filename;
-      nameByFilename[name] = filename;
       final meta = info == null
           ? filename
           : '${info.sizeGb} GB \u00b7 Min ${info.minRamGb} GB RAM \u00b7 '
               '${info.minRamGb > 6 ? 'TOO BIG' : info.sizeGb > 4 ? 'STREAMS' : 'FITS'}';
-      entries.add(PickerEntry('On device', name, meta));
+      addEntry('On device', name, meta, () {
+        if (_modelCtrl.selectedModelFilename.value != filename) {
+          _modelCtrl.loadModel(filename);
+        } else {
+          // Re-picking the loaded local model returns the mic to it.
+          _modelCtrl.clearRemote();
+        }
+      });
     }
+
+    final mesh = MeshService();
+    if (mesh.connectivityOn) {
+      mesh.fetchSeats();
+      mesh.fetchNodeModels();
+      for (final nm in mesh.cachedNodeModels()) {
+        addEntry('Mesh', nm.name, 'On your ${nm.node} node', () {
+          _modelCtrl.selectRemote({
+            'kind': 'mesh',
+            'id': 'node:${nm.node}:${nm.name}',
+            'label': nm.name,
+            'model': nm.name,
+          });
+        });
+      }
+      for (final s in mesh.cachedSeats()) {
+        addEntry(
+          'Mesh',
+          s.model,
+          '${s.lane} \u00b7 ${s.proven ? 'PROVEN' : 'UNVERIFIED'}',
+          () {
+            _modelCtrl.selectRemote({
+              'kind': 'mesh',
+              'id': 'mesh:${s.lane}:${s.model}',
+              'label': s.model,
+              'model': s.model,
+            });
+          },
+        );
+      }
+      for (final c in CustomConnectionsService().list()) {
+        addEntry(
+          'Custom',
+          c.name,
+          '${c.model} \u00b7 phone-direct',
+          () {
+            _modelCtrl.selectRemote({
+              'kind': 'custom',
+              'id': c.id,
+              'label': c.name,
+              'model': c.model,
+            });
+          },
+        );
+      }
+    }
+
+    if (entries.isEmpty) {
+      // Nothing anywhere — nudge user to Models tab
+      setState(() => _mobileTabIndex = 1);
+      return;
+    }
+
+    final remote = _modelCtrl.selectedRemote.value;
     final selectedInfo = _modelCtrl.selectedModelFilename.value != null
         ? _modelCtrl.getModelInfo(_modelCtrl.selectedModelFilename.value!)
         : null;
@@ -649,14 +734,12 @@ class _HomeScreenState extends State<HomeScreen> {
       builder: (_) => SafeArea(
         child: ModelPickerSheet(
           entries: entries,
-          selectedName: selectedInfo?.name,
+          selectedName: remote != null
+              ? remote['label'] as String?
+              : selectedInfo?.name,
           onPick: (entry) {
-            final filename = nameByFilename[entry.name];
             Navigator.pop(context);
-            if (filename != null &&
-                _modelCtrl.selectedModelFilename.value != filename) {
-              _modelCtrl.loadModel(filename);
-            }
+            actions['${entry.source}|${entry.name}']?.call();
           },
         ),
       ),
@@ -740,6 +823,7 @@ class _HomeScreenState extends State<HomeScreen> {
           Obx(() {
             final fname = _modelCtrl.selectedModelFilename.value;
             final info = fname != null ? _modelCtrl.getModelInfo(fname) : null;
+            final remote = _modelCtrl.selectedRemote.value;
             return InkWell(
               onTap: () => Get.toNamed('/models'),
               borderRadius: BorderRadius.circular(8),
@@ -756,7 +840,9 @@ class _HomeScreenState extends State<HomeScreen> {
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     Text(
-                      info?.name ?? (fname ?? 'Select Model'),
+                      remote != null
+                          ? (remote['label'] as String)
+                          : (info?.name ?? (fname ?? 'Select Model')),
                       style: TextStyle(
                         fontSize: 14,
                         fontWeight: FontWeight.w600,

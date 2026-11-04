@@ -132,21 +132,35 @@ class MeshService {
   }
 
   /// Models living on mesh nodes (Kai's PC Ollama and friends).
+  /// Cached last-good like the seat catalog, so the chat header picker
+  /// can list them synchronously.
   Future<List<MeshNodeModel>> fetchNodeModels() async {
-    if (!connectivityOn) return [];
+    if (!connectivityOn) return cachedNodeModels();
     try {
       final r = await http
           .get(Uri.parse('$_base/api/tags'))
           .timeout(const Duration(seconds: 10));
-      if (r.statusCode != 200) return [];
+      if (r.statusCode != 200) return cachedNodeModels();
       final d = jsonDecode(r.body) as Map<String, dynamic>;
-      return (d['models'] as List? ?? [])
+      final list = (d['models'] as List? ?? [])
           .map((m) => MeshNodeModel.fromMap(Map<String, dynamic>.from(m as Map)))
           .where((m) => m.name.isNotEmpty)
           .toList();
+      await _box.put(
+          'catalog_nodes',
+          list.map((m) => {'name': m.name, 'node': m.node}).toList());
+      return list;
     } catch (_) {
-      return [];
+      return cachedNodeModels();
     }
+  }
+
+  List<MeshNodeModel> cachedNodeModels() {
+    final raw = _box.get('catalog_nodes') as List?;
+    if (raw == null) return [];
+    return raw
+        .map((m) => MeshNodeModel.fromMap(Map<String, dynamic>.from(m as Map)))
+        .toList();
   }
 
   /// Stream a chat through the mesh. Yields content deltas only.
