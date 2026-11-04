@@ -6,6 +6,9 @@ import '../controllers/chat_controller.dart';
 import '../controllers/model_controller.dart';
 import '../controllers/theme_controller.dart';
 import '../services/llm_service.dart';
+import '../services/image_gen_service.dart';
+import '../services/mesh_service.dart';
+import '../services/custom_connections_service.dart';
 import '../services/admin_activity_service.dart';
 import '../services/log_service.dart';
 import '../widgets/chat_sidebar.dart';
@@ -104,6 +107,46 @@ class _HomeScreenState extends State<HomeScreen> {
     _msgController.clear();
     setState(() => _dissolvingText = text);
     _autoScrollToBottom = true;
+    // Ticket 31: a selected remote source (a mesh seat or one of Kai's
+    // custom connections) answers instead of the local model, through
+    // the ticket 26 remote-turn seam.
+    final remote = _modelCtrl.selectedRemote.value;
+    if (remote != null && ImageGenService().connectivityOn) {
+      final chat = _chatCtrl.activeChat!;
+      final msgs = <Map<String, String>>[
+        if (chat.systemPrompt.isNotEmpty)
+          {'role': 'system', 'content': chat.systemPrompt},
+        ...chat.messages
+            .where((m) => !m.isSystem)
+            .map((m) => m.toLlamaMessage()),
+        {'role': 'user', 'content': text},
+      ];
+      Stream<String>? stream;
+      if (remote['kind'] == 'custom') {
+        final matches = CustomConnectionsService()
+            .list()
+            .where((c) => c.id == remote['id'])
+            .toList();
+        if (matches.isEmpty) {
+          _modelCtrl.clearRemote();
+        } else {
+          stream = CustomConnectionsService()
+              .streamChat(conn: matches.first, messages: msgs);
+        }
+      } else {
+        stream = MeshService()
+            .streamChat(model: remote['model'] as String, messages: msgs);
+      }
+      if (stream != null) {
+        _chatCtrl.runRemoteTurn(
+          userText: text,
+          tokenStream: stream,
+          modelFilename: remote['label'] as String?,
+        );
+        _scrollToBottom(force: true);
+        return;
+      }
+    }
     _chatCtrl.sendMessage(
       text,
       modelFilename: _modelCtrl.selectedModelFilename.value,

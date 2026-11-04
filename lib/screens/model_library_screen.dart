@@ -6,6 +6,8 @@ import '../theme/app_colors.dart';
 import '../controllers/model_controller.dart';
 import '../services/model_manager.dart';
 import '../services/model_pins_service.dart';
+import '../services/mesh_service.dart';
+import '../services/custom_connections_service.dart';
 import '../models/ai_model_info.dart';
 import '../widgets/model_card.dart';
 import '../widgets/faithful/gravity.dart';
@@ -45,6 +47,12 @@ class _ModelLibraryBodyState extends State<_ModelLibraryBody> {
   final _pinsSvc = ModelPinsService();
   List<AiModelInfo> _pinned = [];
   Set<String> _flagged = {};
+  // Ticket 31: mesh catalog + node models (fetched live, cached last-good).
+  final _meshSvc = MeshService();
+  final _connSvc = CustomConnectionsService();
+  List<MeshSeat> _meshSeats = [];
+  List<MeshNodeModel> _nodeModels = [];
+  bool _meshStale = false;
 
   @override
   void initState() {
@@ -53,6 +61,20 @@ class _ModelLibraryBodyState extends State<_ModelLibraryBody> {
     _pinsSvc.fetchPinned().then((p) {
       if (mounted) setState(() => _pinned = p);
     });
+    if (_meshSvc.connectivityOn) {
+      final before = _meshSvc.catalogFetchedAt;
+      _meshSvc.fetchSeats().then((s) {
+        if (mounted) {
+          setState(() {
+            _meshSeats = s;
+            _meshStale = s.isNotEmpty && _meshSvc.catalogFetchedAt == before;
+          });
+        }
+      });
+      _meshSvc.fetchNodeModels().then((n) {
+        if (mounted) setState(() => _nodeModels = n);
+      });
+    }
   }
   final _searchCtrl = TextEditingController();
   String _query = '';
@@ -223,6 +245,12 @@ class _ModelLibraryBodyState extends State<_ModelLibraryBody> {
                   ..._pinnedSection(context, ctrl, manager, allCatalog,
                       downloaded),
 
+                // ── Mesh seats + custom connections (ticket 31) ──
+                if (_filter == _Filter.all && _query.isEmpty) ...[
+                  ..._meshSection(context, ctrl),
+                  ..._customSection(context, ctrl),
+                ],
+
                 // ── Local files not in catalog ──────────
                 if (_filter == _Filter.all ||
                     _filter == _Filter.downloaded) ...[
@@ -332,6 +360,212 @@ class _ModelLibraryBodyState extends State<_ModelLibraryBody> {
         ),
       const SizedBox(height: 8),
     ];
+  }
+
+  // ── Ticket 31 sections ──────────────────────────────────────
+
+  Widget _remoteRow(
+    BuildContext context,
+    ModelController ctrl, {
+    required Map<String, dynamic> source,
+    required String title,
+    required String sub,
+    required String badge,
+    required Color badgeColor,
+    required IconData icon,
+  }) {
+    final sel = ctrl.selectedRemote.value;
+    final selected =
+        sel != null && sel['kind'] == source['kind'] && sel['id'] == source['id'];
+    return GestureDetector(
+      onTap: () {
+        if (selected) {
+          ctrl.clearRemote();
+        } else {
+          ctrl.selectRemote(source);
+        }
+        setState(() {});
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            backgroundColor: context.bgPanel,
+            content: Text(
+              selected
+                  ? 'Back to your local models'
+                  : '${source['label']} will answer in chat now',
+              style: TextStyle(color: context.text),
+            ),
+          ),
+        );
+      },
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 8),
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: context.bgPanel,
+          border: Border.all(
+              color: selected ? AppColors.accent : context.border),
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Row(
+          children: [
+            Icon(icon,
+                size: 18,
+                color: selected ? AppColors.accent : context.textM),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    style: TextStyle(fontSize: 13, color: context.text),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  Text(
+                    sub,
+                    style: TextStyle(fontSize: 11, color: context.textM),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 8),
+            Container(
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+              decoration: BoxDecoration(
+                border: Border.all(color: badgeColor),
+                borderRadius: BorderRadius.circular(6),
+              ),
+              child: Text(
+                badge,
+                style: TextStyle(
+                    fontSize: 9,
+                    fontWeight: FontWeight.w700,
+                    color: badgeColor,
+                    letterSpacing: 0.4),
+              ),
+            ),
+            if (selected) ...[
+              const SizedBox(width: 8),
+              const Text(
+                'Answering',
+                style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.accent),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  List<Widget> _meshSection(BuildContext context, ModelController ctrl) {
+    if (!_meshSvc.connectivityOn) return const [];
+    if (_meshSeats.isEmpty && _nodeModels.isEmpty) return const [];
+    final widgets = <Widget>[
+      _sectionTitle(context, 'Mesh - Astro OS lanes via your PC'),
+      const SizedBox(height: 4),
+      Text(
+        _meshStale
+            ? 'Cached catalog - your PC mesh is unreachable right now'
+            : 'Live catalog from your PC mesh',
+        style: TextStyle(fontSize: 11, color: context.textM),
+      ),
+      const SizedBox(height: 12),
+    ];
+    for (final nm in _nodeModels) {
+      widgets.add(_remoteRow(
+        context,
+        ctrl,
+        source: {
+          'kind': 'mesh',
+          'id': 'node:${nm.node}:${nm.name}',
+          'label': nm.name,
+          'model': nm.name,
+        },
+        title: nm.name,
+        sub: 'On your ${nm.node} node',
+        badge: 'NODE',
+        badgeColor: AppColors.accent,
+        icon: Icons.computer_outlined,
+      ));
+    }
+    const groupOrder = ['paid', 'trial', 'free', 'local', 'compute'];
+    final byGroup = <String, List<MeshSeat>>{};
+    for (final s in _meshSeats) {
+      byGroup.putIfAbsent(s.group, () => []).add(s);
+    }
+    for (final g in groupOrder) {
+      final seats = byGroup[g];
+      if (seats == null || seats.isEmpty) continue;
+      widgets.add(Padding(
+        padding: const EdgeInsets.only(top: 10, bottom: 6),
+        child: Text(
+          g.toUpperCase(),
+          style: TextStyle(
+              fontSize: 11,
+              fontWeight: FontWeight.w600,
+              color: context.textD,
+              letterSpacing: 0.6),
+        ),
+      ));
+      for (final s in seats) {
+        widgets.add(_remoteRow(
+          context,
+          ctrl,
+          source: {
+            'kind': 'mesh',
+            'id': 'mesh:${s.lane}:${s.model}',
+            'label': s.model,
+            'model': s.model,
+          },
+          title: s.model,
+          sub: s.lane,
+          badge: s.proven ? 'PROVEN' : 'UNVERIFIED',
+          badgeColor: s.proven ? AppColors.green : context.textM,
+          icon: Icons.hub_outlined,
+        ));
+      }
+    }
+    widgets.add(const SizedBox(height: 16));
+    return widgets;
+  }
+
+  List<Widget> _customSection(BuildContext context, ModelController ctrl) {
+    if (!_connSvc.connectivityOn) return const [];
+    final conns = _connSvc.list();
+    if (conns.isEmpty) return const [];
+    final widgets = <Widget>[
+      _sectionTitle(context, 'Custom connections'),
+      const SizedBox(height: 4),
+      Text(
+        'Your own URL/API seats - they answer straight from this phone',
+        style: TextStyle(fontSize: 11, color: context.textM),
+      ),
+      const SizedBox(height: 12),
+    ];
+    for (final c in conns) {
+      widgets.add(_remoteRow(
+        context,
+        ctrl,
+        source: {
+          'kind': 'custom',
+          'id': c.id,
+          'label': c.name,
+          'model': c.model,
+        },
+        title: c.name,
+        sub: '${c.model} - ${c.type == 'ollama' ? 'Ollama API' : 'OpenAI API'}',
+        badge: 'CUSTOM',
+        badgeColor: AppColors.accent,
+        icon: Icons.link_outlined,
+      ));
+    }
+    widgets.add(const SizedBox(height: 16));
+    return widgets;
   }
 
   void _pinSheet(BuildContext context, AiModelInfo model) {

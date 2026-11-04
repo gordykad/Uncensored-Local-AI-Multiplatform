@@ -20,6 +20,16 @@ class ModelController extends GetxController {
 
   // ── Observable State ──────────────────────────────────────────
   final selectedModelFilename = RxnString();
+
+  /// Ticket 31: the selected remote chat source, when one is picked:
+  /// {kind: 'mesh' | 'custom', id, label, model}. Null means the local
+  /// model answers. Picking a local model clears it (see loadModel).
+  final selectedRemote = Rxn<Map<String, dynamic>>();
+
+  void selectRemote(Map<String, dynamic> source) =>
+      selectedRemote.value = source;
+
+  void clearRemote() => selectedRemote.value = null;
   final loadingModelFilename = RxnString(); // Track which one is currently loading
   final isLoadingModel = false.obs;
   final isImportingModel = false.obs; // True when copying file from internal storage
@@ -145,6 +155,8 @@ class ModelController extends GetxController {
 
   /// Load a model into the LLM engine.
   Future<void> loadModel(String filename) async {
+    // Loading a local model makes it the answering source again.
+    clearRemote();
     // If already loading something, cancel it first
     if (isLoadingModel.value) {
       cancelLoadModel();

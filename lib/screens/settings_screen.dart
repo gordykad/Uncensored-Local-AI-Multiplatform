@@ -14,6 +14,8 @@ import '../widgets/faithful/shared.dart';
 import '../controllers/chat_controller.dart';
 import '../controllers/model_controller.dart';
 import '../services/local_api_server_service.dart';
+import '../services/mesh_service.dart';
+import '../services/custom_connections_service.dart';
 import '../services/model_manager.dart';
 import '../services/background_optimizer_service.dart';
 import '../services/chat_storage_service.dart';
@@ -608,6 +610,30 @@ class _SettingsBody extends StatelessWidget {
 
               const SizedBox(height: 28),
 
+              // ── Mesh (ticket 31) ────────────────────────
+              _sectionHeader(context, 'Mesh'),
+              const SizedBox(height: 8),
+              Text(
+                'The Astro OS lanes, served by the mesh on your PC. Keys stay on the PC - the app only holds this address.',
+                style: TextStyle(fontSize: 12, color: context.textD),
+              ),
+              const SizedBox(height: 12),
+              const _MeshSettingsCard(),
+
+              const SizedBox(height: 28),
+
+              // ── Custom Connections (ticket 31) ──────────
+              _sectionHeader(context, 'Custom Connections'),
+              const SizedBox(height: 8),
+              Text(
+                'Your own URL/API seats. They answer straight from this phone, anywhere - no PC needed. Keys live on this device only.',
+                style: TextStyle(fontSize: 12, color: context.textD),
+              ),
+              const SizedBox(height: 12),
+              const _CustomConnectionsCard(),
+
+              const SizedBox(height: 28),
+
               // ── Storage ───────────────────────────────────
               _sectionHeader(context, 'Storage'),
               const SizedBox(height: 12),
@@ -763,7 +789,7 @@ class _SettingsBody extends StatelessWidget {
                     ),
                     const SizedBox(height: 10),
                     Text(
-                      'Astro MiniX 1.9.3 \u00b7 Powered by llamadart + llama.cpp',
+                      'Astro MiniX 1.10.0 \u00b7 Powered by llamadart + llama.cpp',
                       style: TextStyle(fontSize: 11, color: context.textD),
                     ),
                   ],
@@ -1316,3 +1342,294 @@ class _HardwareSettingsCardState extends State<_HardwareSettingsCard> {
   }
 }
 
+
+// ── Ticket 31: Mesh settings card ──────────────────────────────
+
+class _MeshSettingsCard extends StatefulWidget {
+  const _MeshSettingsCard();
+
+  @override
+  State<_MeshSettingsCard> createState() => _MeshSettingsCardState();
+}
+
+class _MeshSettingsCardState extends State<_MeshSettingsCard> {
+  final _svc = MeshService();
+  late final TextEditingController _addr;
+  String _status = 'Checking...';
+
+  @override
+  void initState() {
+    super.initState();
+    _addr = TextEditingController(text: _svc.address);
+    _refresh();
+  }
+
+  @override
+  void dispose() {
+    _addr.dispose();
+    super.dispose();
+  }
+
+  Future<void> _refresh() async {
+    final totals = await _svc.fetchTotals();
+    if (!mounted) return;
+    setState(() {
+      _status = totals == null
+          ? 'Unreachable - check the address and that your PC is on'
+          : '${totals['providers']} providers - ${totals['seats']} seats - ${totals['proven']} proven';
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: BoxDecoration(
+        color: context.bgPanel,
+        border: Border.all(color: context.border),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          TextField(
+            controller: _addr,
+            style: TextStyle(color: context.text, fontSize: 13),
+            decoration: InputDecoration(
+              labelText: 'Mesh address (host:port)',
+              labelStyle: TextStyle(color: context.textM, fontSize: 12),
+              enabledBorder: UnderlineInputBorder(
+                  borderSide: BorderSide(color: context.border)),
+              focusedBorder: const UnderlineInputBorder(
+                  borderSide: BorderSide(color: AppColors.accent)),
+            ),
+          ),
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  _status,
+                  style: TextStyle(fontSize: 12, color: context.textM),
+                ),
+              ),
+              TextButton(
+                onPressed: () {
+                  _svc.address = _addr.text;
+                  setState(() => _status = 'Checking...');
+                  _refresh();
+                },
+                child: const Text('Save + check'),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ── Ticket 31: Custom Connections card ─────────────────────────
+
+class _CustomConnectionsCard extends StatefulWidget {
+  const _CustomConnectionsCard();
+
+  @override
+  State<_CustomConnectionsCard> createState() =>
+      _CustomConnectionsCardState();
+}
+
+class _CustomConnectionsCardState extends State<_CustomConnectionsCard> {
+  final _svc = CustomConnectionsService();
+
+  Widget _field(
+    BuildContext context,
+    TextEditingController c,
+    String label, {
+    bool obscure = false,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: TextField(
+        controller: c,
+        obscureText: obscure,
+        style: TextStyle(color: context.text, fontSize: 13),
+        decoration: InputDecoration(
+          labelText: label,
+          labelStyle: TextStyle(color: context.textM, fontSize: 12),
+          enabledBorder: UnderlineInputBorder(
+              borderSide: BorderSide(color: context.border)),
+          focusedBorder: const UnderlineInputBorder(
+              borderSide: BorderSide(color: AppColors.accent)),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _form([CustomConnection? existing]) async {
+    final name = TextEditingController(text: existing?.name ?? '');
+    final base = TextEditingController(text: existing?.baseUrl ?? '');
+    final model = TextEditingController(text: existing?.model ?? '');
+    final key = TextEditingController(text: existing?.apiKey ?? '');
+    var type = existing?.type ?? 'openai';
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (dlgCtx) => StatefulBuilder(
+        builder: (dlgCtx, setDlg) => AlertDialog(
+          backgroundColor: dlgCtx.bgPanel,
+          title: Text(
+            existing == null ? 'Add connection' : 'Edit connection',
+            style: TextStyle(color: dlgCtx.text),
+          ),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                _field(dlgCtx, name, 'Name'),
+                _field(dlgCtx, base, 'Base URL (https://...)'),
+                _field(dlgCtx, model, 'Model id'),
+                _field(dlgCtx, key, 'API key (optional)', obscure: true),
+                Row(
+                  children: [
+                    Text(
+                      'API type',
+                      style:
+                          TextStyle(color: dlgCtx.textM, fontSize: 12),
+                    ),
+                    const Spacer(),
+                    DropdownButton<String>(
+                      value: type,
+                      dropdownColor: dlgCtx.bgPanel,
+                      style: TextStyle(color: dlgCtx.text, fontSize: 13),
+                      items: const [
+                        DropdownMenuItem(
+                            value: 'openai', child: Text('OpenAI')),
+                        DropdownMenuItem(
+                            value: 'ollama', child: Text('Ollama')),
+                      ],
+                      onChanged: (v) =>
+                          setDlg(() => type = v ?? 'openai'),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dlgCtx).pop(false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(dlgCtx).pop(true),
+              child: const Text('Save'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (ok != true) return;
+    if (name.text.trim().isEmpty ||
+        base.text.trim().isEmpty ||
+        model.text.trim().isEmpty) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          backgroundColor: context.bgPanel,
+          content: Text(
+            'Name, base URL and model are all required',
+            style: TextStyle(color: context.text),
+          ),
+        ),
+      );
+      return;
+    }
+    final conn = CustomConnection(
+      id: existing?.id ??
+          'c${DateTime.now().millisecondsSinceEpoch}',
+      name: name.text.trim(),
+      baseUrl: CustomConnection.normalizeBase(base.text, type),
+      model: model.text.trim(),
+      apiKey: key.text.trim(),
+      type: type,
+    );
+    if (existing == null) {
+      _svc.add(conn);
+    } else {
+      _svc.update(conn);
+    }
+    if (mounted) setState(() {});
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final conns = _svc.list();
+    return Container(
+      decoration: BoxDecoration(
+        color: context.bgPanel,
+        border: Border.all(color: context.border),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          if (conns.isEmpty)
+            Text(
+              'No connections yet. Add one and it shows up in the model picker as your own seat.',
+              style: TextStyle(fontSize: 12, color: context.textM),
+            ),
+          for (final c in conns)
+            Row(
+              children: [
+                Icon(Icons.link_outlined,
+                    size: 16, color: context.textM),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        c.name,
+                        style:
+                            TextStyle(fontSize: 13, color: context.text),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      Text(
+                        '${c.model} - ${c.type == 'ollama' ? 'Ollama API' : 'OpenAI API'}',
+                        style: TextStyle(
+                            fontSize: 11, color: context.textM),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ],
+                  ),
+                ),
+                IconButton(
+                  icon: Icon(Icons.edit_outlined,
+                      size: 18, color: context.textM),
+                  onPressed: () => _form(c),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.delete_outline,
+                      size: 18, color: AppColors.red),
+                  onPressed: () {
+                    _svc.remove(c.id);
+                    setState(() {});
+                  },
+                ),
+              ],
+            ),
+          const SizedBox(height: 8),
+          Align(
+            alignment: Alignment.centerRight,
+            child: TextButton.icon(
+              onPressed: () => _form(),
+              icon: const Icon(Icons.add, size: 16),
+              label: const Text('Add connection'),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
