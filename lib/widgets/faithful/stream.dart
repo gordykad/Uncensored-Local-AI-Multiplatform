@@ -126,6 +126,15 @@ class _TokenInState extends State<_TokenIn>
 
 /// Live reply text: words play the #26 entrance as they arrive; the #26
 /// caret rides the tail while [streaming].
+///
+/// HOTFIX 1.9.2 (ticket 29 pull-forward): the original build tokenized
+/// EVERY word into its own animated widget inside a Wrap. A long reply
+/// meant thousands of stateful children relaid out on every stream
+/// chunk — the UI thread died mid-generation (Kai, 2026-11-04). Now the
+/// settled prefix renders as ONE plain span in a single paragraph and
+/// only the trailing [_tailWords] words keep their token entrances, so
+/// render cost stays flat no matter how long the reply gets. The token
+/// entrance itself is unchanged; B3's glitch entry still replaces it.
 class StreamReplyText extends StatelessWidget {
   final String text;
   final bool streaming;
@@ -139,17 +148,45 @@ class StreamReplyText extends StatelessWidget {
     required this.caretColor,
   });
 
+  static const int _tailWords = 24;
+
   @override
   Widget build(BuildContext context) {
+    if (!streaming) return Text(text, style: style);
     final words = text.split(RegExp(r'(?<=\s)'));
-    return Wrap(
-      crossAxisAlignment: WrapCrossAlignment.center,
-      children: [
-        for (final w in words)
-          if (w.isNotEmpty) _TokenIn(w, style: style),
-        if (streaming)
+    if (words.length <= _tailWords) {
+      return Wrap(
+        crossAxisAlignment: WrapCrossAlignment.center,
+        children: [
+          for (final w in words)
+            if (w.isNotEmpty) _TokenIn(w, style: style),
           StreamCaret(fontSize: style.fontSize ?? 15, color: caretColor),
-      ],
+        ],
+      );
+    }
+    final cut = words.length - _tailWords;
+    return Text.rich(
+      TextSpan(
+        style: style,
+        children: [
+          TextSpan(text: words.sublist(0, cut).join()),
+          for (var i = cut; i < words.length; i++)
+            if (words[i].isNotEmpty)
+              WidgetSpan(
+                alignment: PlaceholderAlignment.baseline,
+                baseline: TextBaseline.alphabetic,
+                child: _TokenIn(words[i], style: style),
+              ),
+          WidgetSpan(
+            alignment: PlaceholderAlignment.baseline,
+            baseline: TextBaseline.alphabetic,
+            child: StreamCaret(
+              fontSize: style.fontSize ?? 15,
+              color: caretColor,
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -175,6 +212,17 @@ class _RegenRevealTextState extends State<RegenRevealText> {
   Timer? _timer;
   late List<String> _words;
 
+  /// Words revealed per 32ms tick. The #2 cadence is 3 — kept for any
+  /// reply up to ~900 words; longer replies scale the chunk so the
+  /// sweep always lands in about ten seconds instead of half a minute
+  /// of full-screen repaints (hotfix 1.9.2).
+  int get _step => _words.length <= 900 ? 3 : (_words.length / 300).ceil();
+
+  /// Words at the sweep head that keep their animated token form; the
+  /// revealed prefix before them renders as one plain span (hotfix
+  /// 1.9.2 — same flat-cost rule as StreamReplyText).
+  static const int _headWords = 6;
+
   @override
   void initState() {
     super.initState();
@@ -184,7 +232,7 @@ class _RegenRevealTextState extends State<RegenRevealText> {
         tm.cancel();
         return;
       }
-      setState(() => _shown = (_shown + 3).clamp(0, _words.length));
+      setState(() => _shown = (_shown + _step).clamp(0, _words.length));
       if (_shown >= _words.length) {
         tm.cancel();
         _timer = null;
@@ -205,7 +253,7 @@ class _RegenRevealTextState extends State<RegenRevealText> {
             tm.cancel();
             return;
           }
-          setState(() => _shown = (_shown + 3).clamp(0, _words.length));
+          setState(() => _shown = (_shown + _step).clamp(0, _words.length));
           if (_shown >= _words.length) {
             tm.cancel();
             _timer = null;
@@ -224,11 +272,30 @@ class _RegenRevealTextState extends State<RegenRevealText> {
 
   @override
   Widget build(BuildContext context) {
-    return Wrap(
-      children: [
-        for (var i = 0; i < _shown && i < _words.length; i++)
-          if (_words[i].isNotEmpty) _RegenWord(_words[i], widget.style),
-      ],
+    final shown = _shown.clamp(0, _words.length);
+    if (shown <= _headWords) {
+      return Wrap(
+        children: [
+          for (var i = 0; i < shown; i++)
+            if (_words[i].isNotEmpty) _RegenWord(_words[i], widget.style),
+        ],
+      );
+    }
+    final cut = shown - _headWords;
+    return Text.rich(
+      TextSpan(
+        style: widget.style,
+        children: [
+          TextSpan(text: _words.sublist(0, cut).join()),
+          for (var i = cut; i < shown; i++)
+            if (_words[i].isNotEmpty)
+              WidgetSpan(
+                alignment: PlaceholderAlignment.baseline,
+                baseline: TextBaseline.alphabetic,
+                child: _RegenWord(_words[i], widget.style),
+              ),
+        ],
+      ),
     );
   }
 }
