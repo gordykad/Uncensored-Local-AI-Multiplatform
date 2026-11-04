@@ -53,6 +53,7 @@ class _ModelLibraryBodyState extends State<_ModelLibraryBody> {
   List<MeshSeat> _meshSeats = [];
   List<MeshNodeModel> _nodeModels = [];
   bool _meshStale = false;
+  bool _meshTried = false;
 
   @override
   void initState() {
@@ -68,6 +69,7 @@ class _ModelLibraryBodyState extends State<_ModelLibraryBody> {
           setState(() {
             _meshSeats = s;
             _meshStale = s.isNotEmpty && _meshSvc.catalogFetchedAt == before;
+            _meshTried = true;
           });
         }
       });
@@ -464,7 +466,30 @@ class _ModelLibraryBodyState extends State<_ModelLibraryBody> {
 
   List<Widget> _meshSection(BuildContext context, ModelController ctrl) {
     if (!_meshSvc.connectivityOn) return const [];
-    if (_meshSeats.isEmpty && _nodeModels.isEmpty) return const [];
+    if (_meshSeats.isEmpty && _nodeModels.isEmpty) {
+      // Never silently absent: if a fetch ran and nothing has ever
+      // come back (and there is no cache to show), say so out loud.
+      if (_meshTried && _meshSvc.catalogFetchedAt == null) {
+        return [
+          _sectionTitle(context, 'Mesh - Astro OS lanes via your PC'),
+          const SizedBox(height: 8),
+          Container(
+            margin: const EdgeInsets.only(bottom: 16),
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: context.bgPanel,
+              border: Border.all(color: context.border),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Text(
+              'Mesh unreachable at ${_meshSvc.address}. Check Settings, Mesh - and that your PC is on and on the same tailnet.',
+              style: TextStyle(fontSize: 12, color: context.textM),
+            ),
+          ),
+        ];
+      }
+      return const [];
+    }
     final widgets = <Widget>[
       _sectionTitle(context, 'Mesh - Astro OS lanes via your PC'),
       const SizedBox(height: 4),

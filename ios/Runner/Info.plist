@@ -76,5 +76,18 @@
 	<string>Uncensored Local AI lets you take a photo to attach to a chat. Photos are processed on your device only.</string>
 	<key>NSMicrophoneUsageDescription</key>
 	<string>Uncensored Local AI uses the microphone only if you record audio or video to attach to a chat. Audio is processed on your device only.</string>
+	<!-- Ticket 31 fix (1.10.1): the mesh on Kai's PC and his custom
+	     connections are plain-HTTP endpoints on his own networks
+	     (tailnet / LAN / his own servers). Without an ATS exception
+	     iOS blocks every one of those requests from the app, which
+	     is why the mesh catalog never loaded in 1.10.0. Safari is
+	     exempt from ATS, which is why the console site worked. -->
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsArbitraryLoads</key>
+		<true/>
+		<key>NSAllowsLocalNetworking</key>
+		<true/>
+	</dict>
 </dict>
 </plist>
