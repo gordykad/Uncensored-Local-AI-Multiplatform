@@ -21,7 +21,6 @@ import '../models/image_entry.dart';
 import '../services/image_gen_service.dart';
 import '../services/log_service.dart';
 import '../theme/app_colors.dart';
-import '../widgets/faithful/nexus_velocity.dart';
 import '../widgets/faithful/orb.dart';
 
 class _Item {
@@ -54,7 +53,6 @@ class _ImageGenScreenState extends State<ImageGenScreen>
   ImageEntry? _current;
   bool _busy = false;
   String _phase = '';
-  String? _dissolving;
   late final AnimationController _beam;
 
   static const _placeholders = [
@@ -182,11 +180,16 @@ class _ImageGenScreenState extends State<ImageGenScreen>
   }
 
   void _send() {
-    if (_busy || _dissolving != null) return;
+    // The Nexus disintegration on the prompt text is REMOVED for good
+    // (Kai, 2026-11-04): it sampled the typed prompt into particles and
+    // froze mid-dissolve on long prompts, trapping the submit behind
+    // the animation. Sending is direct now: capture, clear, generate.
+    if (_busy) return;
     final text = _input.text.trim().isEmpty
         ? _placeholders[_phIndex]
         : _input.text.trim();
-    setState(() => _dissolving = text);
+    _input.clear();
+    _generate(text);
   }
 
   @override
@@ -507,14 +510,9 @@ class _ImageGenScreenState extends State<ImageGenScreen>
               child: Stack(alignment: Alignment.centerLeft, children: [
                 TextField(
                   controller: _input,
-                  style: TextStyle(
-                      color: _dissolving == null
-                          ? AppColors.darkText
-                          : Colors.transparent,
-                      fontSize: 14),
-                  cursorColor: _dissolving == null
-                      ? AppColors.accent
-                      : Colors.transparent,
+                  style:
+                      TextStyle(color: AppColors.darkText, fontSize: 14),
+                  cursorColor: AppColors.accent,
                   decoration: const InputDecoration(
                     border: InputBorder.none,
                     isDense: true,
@@ -522,7 +520,7 @@ class _ImageGenScreenState extends State<ImageGenScreen>
                   ),
                   onSubmitted: (_) => _send(),
                 ),
-                if (_input.text.isEmpty && _dissolving == null)
+                if (_input.text.isEmpty)
                   IgnorePointer(
                     child: AnimatedSwitcher(
                       duration: const Duration(milliseconds: 350),
@@ -566,23 +564,6 @@ class _ImageGenScreenState extends State<ImageGenScreen>
             ),
           ]),
         ),
-        if (_dissolving != null)
-          Positioned.fill(
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(19, 15, 60, 4),
-              child: DisintegratingText(
-                text: _dissolving!,
-                color: AppColors.darkText,
-                fontSize: 14,
-                onDone: () {
-                  final text = _dissolving!;
-                  if (mounted) setState(() => _dissolving = null);
-                  _input.clear();
-                  _generate(text);
-                },
-              ),
-            ),
-          ),
       ]),
     );
   }
