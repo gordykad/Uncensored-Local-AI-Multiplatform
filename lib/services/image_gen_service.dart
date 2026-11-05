@@ -10,10 +10,13 @@
 // flags an entry locally and the flag is mirrored into that config.
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'dart:math';
 
+import 'package:flutter/foundation.dart';
 import 'package:hive/hive.dart';
 import 'package:http/http.dart' as http;
+import 'package:path_provider/path_provider.dart';
 
 import '../models/image_entry.dart';
 
@@ -21,6 +24,40 @@ class ImageGenResult {
   final List<int> bytes;
   final int? seed;
   const ImageGenResult(this.bytes, this.seed);
+}
+
+/// One persisted generation for the Previous Gens gallery (Kai,
+/// 2026-11-04). The PNG lives in the app documents /images folder;
+/// this record is its index entry in the 'imagegen' Hive box.
+class GenRecord {
+  final String file;
+  final String prompt;
+  final int? seed;
+  final String model;
+  final int ts; // epoch ms
+  const GenRecord({
+    required this.file,
+    required this.prompt,
+    this.seed,
+    required this.model,
+    required this.ts,
+  });
+
+  Map<String, dynamic> toMap() => {
+        'file': file,
+        'prompt': prompt,
+        'seed': seed,
+        'model': model,
+        'ts': ts,
+      };
+
+  factory GenRecord.fromMap(Map m) => GenRecord(
+        file: m['file'] as String,
+        prompt: (m['prompt'] ?? '') as String,
+        seed: (m['seed'] as num?)?.toInt(),
+        model: (m['model'] ?? '') as String,
+        ts: ((m['ts'] ?? 0) as num).toInt(),
+      );
 }
 
 class ImageGenService {
@@ -46,6 +83,62 @@ class ImageGenService {
   }
 
   bool get runpodReady => runpodEndpoint.isNotEmpty && runpodKey.isNotEmpty;
+
+  // ── Generation history (Previous Gens gallery) ─────────────
+  /// Bumped on every history change; the gallery tab listens.
+  static final historyRevision = ValueNotifier<int>(0);
+
+  List<GenRecord> history() {
+    final raw = _box.get('history');
+    if (raw is! List) return [];
+    return raw
+        .whereType<Map>()
+        .map((m) => GenRecord.fromMap(m))
+        .toList();
+  }
+
+  /// Persist a finished generation (PNG to app files + index
+  /// record). Never throws: a history write must not fail the
+  /// generation itself.
+  Future<GenRecord?> recordGeneration({
+    required List<int> bytes,
+    required String prompt,
+    int? seed,
+    required String model,
+  }) async {
+    try {
+      final dir = await getApplicationDocumentsDirectory();
+      final folder = Directory('${dir.path}/images');
+      if (!await folder.exists()) await folder.create(recursive: true);
+      final ts = DateTime.now().millisecondsSinceEpoch;
+      final f = File('${folder.path}/gen_$ts.png');
+      await f.writeAsBytes(bytes);
+      final rec = GenRecord(
+          file: f.path, prompt: prompt, seed: seed, model: model, ts: ts);
+      final list = history()..insert(0, rec);
+      // Cap the gallery at 200; evict the oldest files with them.
+      while (list.length > 200) {
+        final old = list.removeLast();
+        try {
+          await File(old.file).delete();
+        } catch (_) {}
+      }
+      await _box.put('history', list.map((r) => r.toMap()).toList());
+      historyRevision.value++;
+      return rec;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<void> deleteGeneration(GenRecord rec) async {
+    try {
+      await File(rec.file).delete();
+    } catch (_) {}
+    final list = history()..removeWhere((r) => r.file == rec.file);
+    await _box.put('history', list.map((r) => r.toMap()).toList());
+    historyRevision.value++;
+  }
 
   List<ImageEntry> localEntries() {
     final raw = _box.get('entries');

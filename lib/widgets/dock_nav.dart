@@ -22,14 +22,17 @@ class DockNav extends StatefulWidget {
 
 class _DockNavState extends State<DockNav> {
   double? _pointerX;
-  final List<GlobalKey> _keys = List.generate(4, (_) => GlobalKey());
+  final List<GlobalKey> _keys = List.generate(5, (_) => GlobalKey());
 
-  // Founder ramp, light -> dark (Amendment 8).
+  // Founder ramp, light -> dark (Amendment 8). The Gens tile joined
+  // 2026-11-04 (Kai: a "previous image gens" tab); the ramp extends
+  // one step darker for Settings.
   static const _tiles = [
     (Icons.chat_bubble_rounded, Color(0xFFC084FC), 'Chat'),
     (Icons.layers_rounded, Color(0xFFA855F7), 'Models'),
     (Icons.auto_awesome_rounded, Color(0xFF9333EA), 'Image Gen'),
-    (Icons.settings_rounded, Color(0xFF7E22CE), 'Settings'),
+    (Icons.photo_library_rounded, Color(0xFF7E22CE), 'Gens'),
+    (Icons.settings_rounded, Color(0xFF6B21A8), 'Settings'),
   ];
 
   double _sizeFor(int i) {

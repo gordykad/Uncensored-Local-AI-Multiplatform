@@ -148,6 +148,14 @@ class _ImageGenScreenState extends State<ImageGenScreen>
       item.bytes = result.bytes;
       item.seed = result.seed;
       item.status = 'done';
+      // Persist to the Previous Gens gallery (Kai, 2026-11-04).
+      // Fire-and-forget: recordGeneration never throws.
+      _svc.recordGeneration(
+        bytes: result.bytes,
+        prompt: item.prompt,
+        seed: result.seed,
+        model: entry.name,
+      );
     } catch (e) {
       item.status = 'error';
       item.error = e.toString().replaceFirst('Exception: ', '');
@@ -199,11 +207,15 @@ class _ImageGenScreenState extends State<ImageGenScreen>
       _diag('first build');
     }
     final online = _online;
+    // Keyboard open: the hero card collapses out of the way. With it
+    // up, the thread crushed to a slit and images rendered as thin
+    // strips (Kai's screen recording, 2026-11-04).
+    final kbOpen = MediaQuery.viewInsetsOf(context).bottom > 0;
     final body = Column(
       children: [
         _header(online),
         if (!online) _veil() else ...[
-          _heroCard(),
+          if (!kbOpen) _heroCard(),
           Expanded(child: _threadWithSparkles()),
           _pickerRow(),
           _nexusBar(),
@@ -319,7 +331,11 @@ class _ImageGenScreenState extends State<ImageGenScreen>
   }
 
   Widget _threadWithSparkles() {
+    // Hard clip: the thread stays in its lane. Kai's 2026-11-04
+    // recording showed items bleeding under the hero card and over
+    // the picker row while scrolling/resizing.
     return Stack(
+      clipBehavior: Clip.hardEdge,
       children: [
         const Positioned.fill(child: _SparklesField()),
         if (_items.isEmpty)
@@ -330,6 +346,7 @@ class _ImageGenScreenState extends State<ImageGenScreen>
         else
           ListView.builder(
             controller: _scroll,
+            clipBehavior: Clip.hardEdge,
             padding: const EdgeInsets.fromLTRB(14, 10, 14, 12),
             itemCount: _items.length,
             itemBuilder: (_, i) => _itemCard(_items[i]),
@@ -398,7 +415,13 @@ class _ImageGenScreenState extends State<ImageGenScreen>
           Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
             ClipRRect(
               borderRadius: BorderRadius.circular(14),
-              child: Image.memory(Uint8List.fromList(item.bytes!), fit: BoxFit.cover),
+              // Pinned 1:1 box: the image can never collapse into a
+              // strip whatever the viewport is doing (2026-11-04).
+              child: AspectRatio(
+                aspectRatio: 1,
+                child: Image.memory(Uint8List.fromList(item.bytes!),
+                    fit: BoxFit.cover, width: double.infinity),
+              ),
             ),
             const SizedBox(height: 6),
             Row(children: [
