@@ -36,7 +36,7 @@ final class MiniXLiveActivity {
     do {
       let act = try Activity.request(
         attributes: MiniXDownloadAttributes(name: name),
-        content: ActivityContent(state: state, staleDate: nil),
+        contentState: state,
         pushType: nil)
       activities[filename] = act
       lastProgress[filename] = -1
@@ -55,7 +55,7 @@ final class MiniXLiveActivity {
       receivedGb: Double(received) / 1_073_741_824.0,
       totalGb: Double(total) / 1_073_741_824.0,
       state: "downloading")
-    Task { await act.update(ActivityContent(state: state, staleDate: nil)) }
+    Task { await act.update(using: state) }
   }
 
   func finished(filename: String, ok: Bool, cancelled: Bool = false) {
@@ -64,11 +64,7 @@ final class MiniXLiveActivity {
     if cancelled {
       let state = MiniXDownloadAttributes.ContentState(
         progress: -1, receivedGb: 0, totalGb: 0, state: "failed")
-      Task {
-        await act.end(
-          ActivityContent(state: state, staleDate: nil),
-          dismissalPolicy: .immediate)
-      }
+      Task { await act.end(using: state, dismissalPolicy: .immediate) }
       return
     }
     let state = MiniXDownloadAttributes.ContentState(
@@ -76,10 +72,6 @@ final class MiniXLiveActivity {
       receivedGb: 0, totalGb: 0,
       state: ok ? "done" : "failed")
     let dismissAt = Date().addingTimeInterval(ok ? 8 : 6)
-    Task {
-      await act.end(
-        ActivityContent(state: state, staleDate: nil),
-        dismissalPolicy: .after(dismissAt))
-    }
+    Task { await act.end(using: state, dismissalPolicy: .after(dismissAt)) }
   }
 }
