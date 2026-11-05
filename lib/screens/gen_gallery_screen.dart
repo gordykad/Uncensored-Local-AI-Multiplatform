@@ -48,9 +48,17 @@ class _GenGalleryScreenState extends State<GenGalleryScreen> {
     final body = Column(
       children: [
         Padding(
-          padding: const EdgeInsets.fromLTRB(18, 14, 18, 6),
+          padding: const EdgeInsets.fromLTRB(6, 8, 18, 6),
           child: Row(
             children: [
+              // Back button (Kai, 2026-11-04: the page shipped with
+              // none - as a pushed page that traps the user).
+              IconButton(
+                onPressed: () => Navigator.of(context).maybePop(),
+                icon: const Icon(Icons.arrow_back_ios_new_rounded,
+                    size: 18, color: AppColors.darkTextM),
+                tooltip: 'Back',
+              ),
               const Text('Previous Gens',
                   style: TextStyle(
                       color: AppColors.darkText,
