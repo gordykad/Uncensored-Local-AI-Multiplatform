@@ -22,7 +22,6 @@ import '../widgets/faithful/widgets.dart';
 import '../widgets/faithful/trace_pickers.dart';
 import '../widgets/faithful/shared.dart';
 import 'model_library_screen.dart';
-import 'gen_gallery_screen.dart';
 import 'image_gen_screen.dart';
 import '../widgets/dock_nav.dart';
 import 'settings_screen.dart';
@@ -420,11 +419,10 @@ class _HomeScreenState extends State<HomeScreen> {
             _buildMobileChatTab(),
             // Tab 1: Models
             const ModelLibraryScreen(embedded: true),
-            // Tab 2: Image Gen (ticket 28)
+            // Tab 2: Image Gen (ticket 28). Previous Gens is a button
+            // inside it, not a tab (Kai, 2026-11-04).
             const ImageGenScreen(embedded: true),
-            // Tab 3: Previous Gens gallery (Kai, 2026-11-04)
-            const GenGalleryScreen(embedded: true),
-            // Tab 4: Settings
+            // Tab 3: Settings
             const SettingsScreen(embedded: true),
           ],
         ),

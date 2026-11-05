@@ -20,6 +20,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:video_player/video_player.dart';
 
 import '../models/image_entry.dart';
+import 'gen_gallery_screen.dart';
 import '../services/image_gen_service.dart';
 import '../services/log_service.dart';
 import '../theme/app_colors.dart';
@@ -592,6 +593,15 @@ class _ImageGenScreenState extends State<ImageGenScreen>
           ),
         ),
         const Spacer(),
+        // Previous Gens lives HERE, inside the studio (Kai, 2026-11-04:
+        // not a dock tab of its own).
+        IconButton(
+          onPressed: () => Navigator.of(context).push(MaterialPageRoute(
+              builder: (_) => const GenGalleryScreen())),
+          icon: const Icon(Icons.photo_library_rounded,
+              size: 19, color: AppColors.darkTextM),
+          tooltip: 'Previous Gens',
+        ),
         IconButton(
           onPressed: _openRunpodSettings,
           icon: const Icon(Icons.tune_rounded,
