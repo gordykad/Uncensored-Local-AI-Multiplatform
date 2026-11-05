@@ -3,6 +3,8 @@
 // WIDTH animates from pointer distance (siblings reflow, never transform
 // scale); tiles are the source's colored macOS-style squares with white
 // glyphs. Founder color ruling: full purple, light to dark left to right.
+import 'dart:ui' as ui;
+
 import 'package:flutter/material.dart';
 
 import '../theme/app_colors.dart';
@@ -33,18 +35,20 @@ class _DockNavState extends State<DockNav> {
     (Icons.settings_rounded, Color(0xFF7E22CE), 'Settings'),
   ];
 
+  // 1.13.0 (Kai): the dock runs ~15% wider than the 1.12.0 build —
+  // tile 52 -> 58, gaps and padding scaled to match (267 -> 306 px).
   double _sizeFor(int i) {
-    if (_pointerX == null) return 52;
+    if (_pointerX == null) return 58;
     final ctx = _keys[i].currentContext;
-    if (ctx == null) return 52;
+    if (ctx == null) return 58;
     final tileBox = ctx.findRenderObject() as RenderBox?;
     final dockBox = context.findRenderObject() as RenderBox?;
-    if (tileBox == null || dockBox == null) return 52;
+    if (tileBox == null || dockBox == null) return 58;
     final center = tileBox.localToGlobal(Offset(tileBox.size.width / 2, 0));
     final local = dockBox.globalToLocal(center);
     final d = (_pointerX! - local.dx).abs();
-    final f = (1 - d / 130).clamp(0.0, 1.0);
-    return 52 + 36 * f;
+    final f = (1 - d / 145).clamp(0.0, 1.0);
+    return 58 + 40 * f;
   }
 
   @override
@@ -57,13 +61,13 @@ class _DockNavState extends State<DockNav> {
         onPointerDown: (e) => setState(() => _pointerX = e.localPosition.dx),
         onPointerUp: (_) => setState(() => _pointerX = null),
         onPointerCancel: (_) => setState(() => _pointerX = null),
+        // Audit #6 (approved 2026-11-05): the dock is a material too —
+        // same translucent fill, now with the blur behind it. The
+        // shadow lives OUTSIDE the clip so it survives.
         child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 10),
-          decoration: BoxDecoration(
-            color: const Color(0xB818181C),
-            border: Border.all(color: AppColors.darkBorder),
-            borderRadius: BorderRadius.circular(26),
-            boxShadow: const [
+          decoration: const BoxDecoration(
+            borderRadius: BorderRadius.all(Radius.circular(26)),
+            boxShadow: [
               BoxShadow(
                 color: Color(0x8C000000),
                 blurRadius: 38,
@@ -71,16 +75,30 @@ class _DockNavState extends State<DockNav> {
               ),
             ],
           ),
+          child: ClipRRect(
+          borderRadius: BorderRadius.circular(26),
+          child: BackdropFilter(
+            filter: ui.ImageFilter.blur(sigmaX: 18, sigmaY: 18),
+            child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+          decoration: BoxDecoration(
+            color: const Color(0xB818181C),
+            border: Border.all(color: AppColors.darkBorder),
+            borderRadius: BorderRadius.circular(26),
+          ),
           child: Row(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.end,
             children: [
               for (var i = 0; i < _tiles.length; i++) ...[
-                if (i > 0) const SizedBox(width: 11),
+                if (i > 0) const SizedBox(width: 14),
                 _cell(i),
               ],
             ],
           ),
+            ),
+          ),
+        ),
         ),
       );
   }

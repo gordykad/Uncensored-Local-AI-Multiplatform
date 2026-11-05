@@ -1,3 +1,5 @@
+import 'dart:ui' as ui;
+
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 
@@ -15,6 +17,7 @@ import '../widgets/chat_sidebar.dart';
 import '../widgets/chat_bubble.dart';
 import '../widgets/faithful/orb.dart';
 import '../widgets/faithful/kinetic.dart';
+import '../widgets/faithful/morph_orb.dart';
 import '../widgets/faithful/textfx.dart';
 import '../widgets/faithful/stream.dart';
 import '../widgets/faithful/nexus_velocity.dart';
@@ -43,6 +46,7 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _sidebarOpen = true;
   bool _loggedBuild = false; // build 18 diagnostics
   String? _dissolvingText; // ticket 08: Nexus send disintegration
+  int _stopCount = 0; // 1.13.0: MorphOrb reads stop taps (no check ball)
   bool _autoScrollToBottom = true;
   String? _lastRenderedChatId;
 
@@ -1062,6 +1066,29 @@ class _HomeScreenState extends State<HomeScreen> {
         _buildInputArea(),
       ],
         ),
+        // 1.13.0: MorphOrb stage (variant #5, Answer Card Mode) — a
+        // transient overlay driven by real generation state. It never
+        // takes touches; the thread and composer stay live under it.
+        Obx(() {
+          final chat = _chatCtrl.activeChat;
+          final gen = _chatCtrl.isGenerating.value;
+          var streaming = false;
+          var failed = false;
+          if (chat != null && chat.messages.isNotEmpty) {
+            final last = chat.messages.last;
+            if (last.isAssistant) {
+              streaming = gen && last.content.isNotEmpty;
+              failed = !gen && last.content.startsWith('⚠');
+            }
+          }
+          return MorphOrbOverlay(
+            running: gen,
+            streaming: streaming,
+            failed: failed,
+            stopCount: _stopCount,
+            reducedMotion: MediaQuery.of(context).disableAnimations,
+          );
+        }),
       ],
     );
   }
@@ -1115,10 +1142,11 @@ class _HomeScreenState extends State<HomeScreen> {
       children: [
         Container(
           padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+      // Audit #6 (approved 2026-11-05): the composer is a material —
+      // translucent fill + backdrop blur, content scrolls under it.
+      // The shadow lives OUTSIDE the clip so it survives.
       child: Container(
         decoration: BoxDecoration(
-          color: context.bgInput,
-          border: Border.all(color: context.border),
           borderRadius: BorderRadius.circular(24),
           boxShadow: [
             BoxShadow(
@@ -1127,6 +1155,16 @@ class _HomeScreenState extends State<HomeScreen> {
               offset: const Offset(0, 2),
             ),
           ],
+        ),
+        child: ClipRRect(
+        borderRadius: BorderRadius.circular(24),
+        child: BackdropFilter(
+          filter: ui.ImageFilter.blur(sigmaX: 18, sigmaY: 18),
+          child: Container(
+        decoration: BoxDecoration(
+          color: context.bgInput.withValues(alpha: 0.72),
+          border: Border.all(color: context.border),
+          borderRadius: BorderRadius.circular(24),
         ),
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.end,
@@ -1185,7 +1223,10 @@ class _HomeScreenState extends State<HomeScreen> {
                     ? _circleButton(
                         icon: Icons.stop_rounded,
                         color: AppColors.red,
-                        onTap: _chatCtrl.stopGeneration,
+                        onTap: () {
+                          setState(() => _stopCount++);
+                          _chatCtrl.stopGeneration();
+                        },
                         tooltip: 'Stop',
                       )
                     : _circleButton(
@@ -1199,6 +1240,9 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
             ),
           ],
+        ),
+        ),
+          ),
         ),
         ),
         ),
@@ -1230,12 +1274,20 @@ class _HomeScreenState extends State<HomeScreen> {
       message: tooltip,
       child: InkWell(
         onTap: onTap,
-        borderRadius: BorderRadius.circular(20),
-        child: Container(
-          width: 36,
-          height: 36,
-          decoration: BoxDecoration(color: color, shape: BoxShape.circle),
-          child: Icon(icon, size: 20, color: Colors.white),
+        borderRadius: BorderRadius.circular(22),
+        // Audit #4 (approved 2026-11-05): the visual stays a 36px
+        // circle, the hit area is Apple's 44pt floor.
+        child: SizedBox(
+          width: 44,
+          height: 44,
+          child: Center(
+            child: Container(
+              width: 36,
+              height: 36,
+              decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+              child: Icon(icon, size: 20, color: Colors.white),
+            ),
+          ),
         ),
       ),
     );
