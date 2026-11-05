@@ -37,6 +37,11 @@ class MeshSeat {
   final bool unverifiedFlag;
   final bool verifiedOverride; // Kai flipped it via /mesh/model-prefs
   final bool favorite; // mesh 0.20: starred via /mesh/model-prefs
+  // Kai's "Dead Rn" tag (1.14.1): an app-side mark for seats that
+  // fail in practice. The gateway's prefs accept only
+  // name/favorite/verified, so the tag lives in the mesh box here;
+  // dead seats sink to the bottom of every list until retried.
+  final bool dead;
   const MeshSeat({
     required this.model,
     required this.lane,
@@ -47,6 +52,7 @@ class MeshSeat {
     this.unverifiedFlag = false,
     this.verifiedOverride = false,
     this.favorite = false,
+    this.dead = false,
   });
 
   bool get proven => status == 'proven';
@@ -78,17 +84,19 @@ class MeshSeat {
     'favorite': favorite,
   };
 
-  MeshSeat copyWith({bool? favorite, bool? verifiedOverride}) => MeshSeat(
-    model: model,
-    lane: lane,
-    group: group,
-    status: status,
-    available: available,
-    blocked: blocked,
-    unverifiedFlag: unverifiedFlag,
-    verifiedOverride: verifiedOverride ?? this.verifiedOverride,
-    favorite: favorite ?? this.favorite,
-  );
+  MeshSeat copyWith({bool? favorite, bool? verifiedOverride, bool? dead}) =>
+      MeshSeat(
+        model: model,
+        lane: lane,
+        group: group,
+        status: status,
+        available: available,
+        blocked: blocked,
+        unverifiedFlag: unverifiedFlag,
+        verifiedOverride: verifiedOverride ?? this.verifiedOverride,
+        favorite: favorite ?? this.favorite,
+        dead: dead ?? this.dead,
+      );
 }
 
 class MeshNodeModel {
@@ -132,6 +140,46 @@ class MeshService {
   /// Live catalog fetch. On any failure, falls back to the last-good
   /// cache (the caller can compare [catalogFetchedAt] to badge it).
   /// Empty when connectivity is off or nothing was ever fetched.
+  // ── "Dead Rn" tags (Kai, 1.14.1) ─────────────────────────────
+  // App-side set of seat model ids Kai has marked dead. Applied to
+  // every seat list on the way out; the cache stores the raw flags.
+
+  Set<String> get deadModels {
+    final raw = _box.get('dead_models') as List?;
+    if (raw == null) return {};
+    return raw.map((e) => e.toString()).toSet();
+  }
+
+  List<MeshSeat> _applyDead(List<MeshSeat> seats) {
+    final dead = deadModels;
+    if (dead.isEmpty) return seats;
+    return [for (final s in seats) s.copyWith(dead: dead.contains(s.model))];
+  }
+
+  /// Tag or untag a seat "Dead Rn". Dead seats sink to the bottom
+  /// of every list until retried (picking one clears the tag).
+  Future<void> setModelDead(String model, bool dead) async {
+    final set = deadModels;
+    if (dead) {
+      set.add(model);
+    } else {
+      set.remove(model);
+    }
+    await _box.put('dead_models', set.toList());
+  }
+
+  /// Picker order: favorites first, "Dead Rn" last (stable inside
+  /// each class).
+  static List<MeshSeat> pickerOrder(List<MeshSeat> items) {
+    int rank(MeshSeat s) => (s.dead ? 2 : 0) + (s.favorite ? 0 : 1);
+    final indexed = items.asMap().entries.toList()
+      ..sort((a, b) {
+        final r = rank(a.value).compareTo(rank(b.value));
+        return r != 0 ? r : a.key.compareTo(b.key);
+      });
+    return [for (final e in indexed) e.value];
+  }
+
   Future<List<MeshSeat>> fetchSeats() async {
     if (!connectivityOn) return cachedSeats();
     try {
@@ -149,7 +197,7 @@ class MeshService {
         'catalog_fetched_ms',
         DateTime.now().millisecondsSinceEpoch,
       );
-      return list;
+      return _applyDead(list);
     } catch (_) {
       return cachedSeats();
     }
@@ -158,9 +206,11 @@ class MeshService {
   List<MeshSeat> cachedSeats() {
     final raw = _box.get('catalog_models') as List?;
     if (raw == null) return [];
-    return raw
-        .map((m) => MeshSeat.fromMap(Map<String, dynamic>.from(m as Map)))
-        .toList();
+    return _applyDead(
+      raw
+          .map((m) => MeshSeat.fromMap(Map<String, dynamic>.from(m as Map)))
+          .toList(),
+    );
   }
 
   /// Lane totals for the Settings status line. Null when unreachable.

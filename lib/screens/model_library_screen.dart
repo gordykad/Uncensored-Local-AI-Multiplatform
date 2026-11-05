@@ -706,7 +706,7 @@ class _ModelLibraryBodyState extends State<_ModelLibraryBody> {
           ),
         ),
       );
-      for (final s in MeshService.favoritesFirst(seats, (s) => s.favorite)) {
+      for (final s in MeshService.pickerOrder(seats)) {
         widgets.add(
           _remoteRow(
             context,
@@ -719,22 +719,51 @@ class _ModelLibraryBodyState extends State<_ModelLibraryBody> {
             },
             trailing: _star(context, s.model, s.favorite),
             title: s.model,
-            sub: s.isBlocked && s.blocked != null
+            sub: s.dead
+                ? '${s.lane} - Dead Rn, tap to retry'
+                : s.isBlocked && s.blocked != null
                 ? '${s.lane} - ${s.blocked}'
                 : s.lane,
-            badge: s.isBlocked
+            badge: s.dead
+                ? 'DEAD RN'
+                : s.isBlocked
                 ? 'BLOCKED'
                 : s.isVerified
                 ? (s.proven ? 'PROVEN' : 'VERIFIED')
                 : 'SMOKE TEST',
-            badgeColor: s.isBlocked
+            badgeColor: s.dead || s.isBlocked
                 ? AppColors.red
                 : s.isVerified
                 ? AppColors.green
                 : AppColors.orange,
             icon: Icons.hub_outlined,
-            dimmed: s.isBlocked,
-            tapOverride: s.isBlocked
+            dimmed: s.isBlocked || s.dead,
+            tapOverride: s.dead
+                ? () async {
+                    // Retrying a dead seat: the tag clears and the
+                    // seat answers in chat — Kai's smoke test decides
+                    // if it earns its place back.
+                    TapFx.select();
+                    await _meshSvc.setModelDead(s.model, false);
+                    ctrl.selectRemote({
+                      'kind': 'mesh',
+                      'id': 'mesh:${s.lane}:${s.model}',
+                      'label': s.model,
+                      'model': s.model,
+                    });
+                    if (!context.mounted) return;
+                    setState(() => _meshSeats = _meshSvc.cachedSeats());
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        backgroundColor: context.bgPanel,
+                        content: Text(
+                          'Retrying ${s.model} - Dead Rn cleared',
+                          style: TextStyle(color: context.text),
+                        ),
+                      ),
+                    );
+                  }
+                : s.isBlocked
                 ? () {
                     ScaffoldMessenger.of(context).showSnackBar(
                       SnackBar(
@@ -747,9 +776,7 @@ class _ModelLibraryBodyState extends State<_ModelLibraryBody> {
                     );
                   }
                 : null,
-            onLongPress: s.isBlocked || s.proven
-                ? null
-                : () => _seatVerifySheet(context, s),
+            onLongPress: () => _seatVerifySheet(context, s),
           ),
         );
       }
@@ -773,42 +800,80 @@ class _ModelLibraryBodyState extends State<_ModelLibraryBody> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
+            if (!s.proven)
+              ListTile(
+                leading: Icon(
+                  target ? Icons.verified_outlined : Icons.undo_outlined,
+                  color: context.textM,
+                  size: 20,
+                ),
+                title: Text(
+                  target ? 'Mark verified' : 'Unmark verified',
+                  style: TextStyle(fontSize: 14, color: context.text),
+                ),
+                subtitle: Text(
+                  s.model,
+                  style: TextStyle(fontSize: 11, color: context.textM),
+                ),
+                onTap: () async {
+                  Navigator.pop(sheetCtx);
+                  final ok = await _meshSvc.setModelVerified(s.model, target);
+                  if (!context.mounted) return;
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      backgroundColor: context.bgPanel,
+                      content: Text(
+                        ok
+                            ? (target
+                                  ? '${s.model} marked verified'
+                                  : '${s.model} unmarked')
+                            : 'The mesh did not accept the flip - is the PC gateway up?',
+                        style: TextStyle(color: context.text),
+                      ),
+                    ),
+                  );
+                  if (ok) {
+                    _meshSvc.fetchSeats().then((s) {
+                      if (mounted) setState(() => _meshSeats = s);
+                    });
+                  }
+                },
+              ),
+            // Kai (1.14.1): "Dead Rn" — tag a seat that doesn't work;
+            // it sinks to the bottom of the list until retried.
             ListTile(
               leading: Icon(
-                target ? Icons.verified_outlined : Icons.undo_outlined,
-                color: context.textM,
+                s.dead ? Icons.replay_outlined : Icons.dangerous_outlined,
+                color: s.dead ? AppColors.accentHi : AppColors.red,
                 size: 20,
               ),
               title: Text(
-                target ? 'Mark verified' : 'Unmark verified',
+                s.dead ? 'Clear Dead Rn (retry)' : 'Mark Dead Rn',
                 style: TextStyle(fontSize: 14, color: context.text),
               ),
               subtitle: Text(
-                s.model,
+                s.dead
+                    ? 'Back in rotation - pick it to smoke-test it again'
+                    : 'Not working right now - park it at the bottom',
                 style: TextStyle(fontSize: 11, color: context.textM),
               ),
               onTap: () async {
                 Navigator.pop(sheetCtx);
-                final ok = await _meshSvc.setModelVerified(s.model, target);
+                TapFx.select();
+                await _meshSvc.setModelDead(s.model, !s.dead);
                 if (!context.mounted) return;
+                setState(() => _meshSeats = _meshSvc.cachedSeats());
                 ScaffoldMessenger.of(context).showSnackBar(
                   SnackBar(
                     backgroundColor: context.bgPanel,
                     content: Text(
-                      ok
-                          ? (target
-                                ? '${s.model} marked verified'
-                                : '${s.model} unmarked')
-                          : 'The mesh did not accept the flip - is the PC gateway up?',
+                      s.dead
+                          ? '${s.model} is back in rotation'
+                          : '${s.model} tagged Dead Rn - parked at the bottom',
                       style: TextStyle(color: context.text),
                     ),
                   ),
                 );
-                if (ok) {
-                  _meshSvc.fetchSeats().then((s) {
-                    if (mounted) setState(() => _meshSeats = s);
-                  });
-                }
               },
             ),
           ],

@@ -174,9 +174,10 @@ class _HomeScreenState extends State<HomeScreen> {
           );
         }
       } else {
-        stream = MeshService().streamChat(
-          model: remote['model'] as String,
-          messages: msgs,
+        final model = remote['model'] as String;
+        stream = _watchedSeatStream(
+          MeshService().streamChat(model: model, messages: msgs),
+          model,
         );
       }
       if (stream != null) {
@@ -194,6 +195,26 @@ class _HomeScreenState extends State<HomeScreen> {
       modelFilename: _modelCtrl.selectedModelFilename.value,
     );
     _scrollToBottom(force: true);
+  }
+
+  /// Kai (1.14.1): a seat that answers a chat earns verified on
+  /// its own — no more long-press Mark verified per seat. The flip
+  /// fires only when the stream completes cleanly with real
+  /// content; errors and Stop leave the seat unverified. Node
+  /// models are not in the seat catalog, so they no-op here. A
+  /// "Dead Rn" seat that answers also sheds its tag — it came back.
+  Stream<String> _watchedSeatStream(Stream<String> src, String model) async* {
+    var answered = false;
+    await for (final chunk in src) {
+      if (chunk.trim().isNotEmpty) answered = true;
+      yield chunk;
+    }
+    if (!answered) return;
+    final mesh = MeshService();
+    final seat = mesh.cachedSeats().where((s) => s.model == model).firstOrNull;
+    if (seat == null) return;
+    if (!seat.isVerified) mesh.setModelVerified(model, true);
+    if (seat.dead) mesh.setModelDead(model, false);
   }
 
   @override
@@ -871,14 +892,13 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         );
       }
-      for (final s in MeshService.favoritesFirst(
-        mesh.cachedSeats(),
-        (s) => s.favorite,
-      )) {
+      for (final s in MeshService.pickerOrder(mesh.cachedSeats())) {
         addEntry(
           'Mesh',
           s.model,
-          s.isBlocked
+          s.dead
+              ? '${s.lane} · DEAD RN · pick to retry'
+              : s.isBlocked
               ? (s.blocked ?? 'Unavailable on this gateway')
               : '${s.lane} \u00b7 ${s.isVerified ? 'VERIFIED' : 'SMOKE TEST'}',
           () {
@@ -890,6 +910,7 @@ class _HomeScreenState extends State<HomeScreen> {
               );
               return;
             }
+            if (s.dead) mesh.setModelDead(s.model, false);
             _modelCtrl.selectRemote({
               'kind': 'mesh',
               'id': 'mesh:${s.lane}:${s.model}',
