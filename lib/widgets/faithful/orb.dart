@@ -52,13 +52,15 @@ List<_OrbParticle> _buildParticles() {
     final n = math.max(4, (30 * r).round());
     for (var j = 0; j < n; j++) {
       final th = j / n * math.pi * 2 + i * 0.35;
-      out.add(_OrbParticle(
-        math.cos(th) * r,
-        y,
-        math.sin(th) * r,
-        (1 - y) / 2,
-        rng.next() * 6.283,
-      ));
+      out.add(
+        _OrbParticle(
+          math.cos(th) * r,
+          y,
+          math.sin(th) * r,
+          (1 - y) / 2,
+          rng.next() * 6.283,
+        ),
+      );
     }
   }
   return out;
@@ -119,6 +121,8 @@ class _ThinkingOrbState extends State<ThinkingOrb>
   }
 
   void _onTick(Duration elapsed) {
+    // Audit #3 (app-wide Reduce Motion): the sphere holds still.
+    if (mounted && MediaQuery.disableAnimationsOf(context)) return;
     final now = elapsed.inMicroseconds / 1e6;
     var dt = now - _lastStamp;
     _lastStamp = now;
@@ -142,8 +146,8 @@ class _ThinkingOrbState extends State<ThinkingOrb>
       _sweep = c < 0.7
           ? const Cubic(0.65, 0, 0.35, 1).transform(c / 0.7)
           : c < 1.6
-              ? 1
-              : math.max(0, 1 - (c - 1.6) / 0.7);
+          ? 1
+          : math.max(0, 1 - (c - 1.6) / 0.7);
       if (c > 2.3) _sweepClock = -1;
     }
     // Excitation decay memory (source exp(-dt/.5)).
@@ -234,8 +238,14 @@ class _OrbPainter extends CustomPainter {
           lt = math.max(lt, el * el * kk[0]);
         }
         if (kk[1] > 0.001) {
-          final v1 = math.max(0.0, (p.x * r1 + p.y * z1 + p.z * j1 - 0.72) / 0.28);
-          final v2 = math.max(0.0, (p.x * o2 + p.y * t2 + p.z * c2 - 0.72) / 0.28);
+          final v1 = math.max(
+            0.0,
+            (p.x * r1 + p.y * z1 + p.z * j1 - 0.72) / 0.28,
+          );
+          final v2 = math.max(
+            0.0,
+            (p.x * o2 + p.y * t2 + p.z * c2 - 0.72) / 0.28,
+          );
           final jl = math.max(v1, v2);
           lt = math.max(lt, jl * jl * kk[1]);
         }
@@ -265,7 +275,8 @@ class _OrbPainter extends CustomPainter {
         final px = c + mt * _radius * fe * je * scale;
         final py = c - hc * _radius * fe * je * scale;
         final hlSweep = ((sw * 1.4 - p.u) / 0.4).clamp(0.0, 1.0);
-        var ft = 0.1 +
+        var ft =
+            0.1 +
             0.035 * math.sin(p.seed + time * 1.6) * (1 - hlSweep) +
             0.32 * ma * ma +
             0.75 * wt * (1 - hlSweep) +
@@ -277,7 +288,8 @@ class _OrbPainter extends CustomPainter {
         final fu = (ft * 48).round();
         if (fu <= 0) continue;
         final yc = (hlSweep * 24).round();
-        final q = (1.15 * (0.45 + 0.75 * ma) * je + 0.9 * wt + hlSweep * 0.25) *
+        final q =
+            (1.15 * (0.45 + 0.75 * ma) * je + 0.9 * wt + hlSweep * 0.25) *
             (1 + rad) *
             (0.4 + 0.6 * fe);
         paint.color = _palette[yc][fu];

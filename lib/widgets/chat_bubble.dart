@@ -4,13 +4,16 @@ import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:get/get.dart';
 
 import '../theme/app_colors.dart';
+import '../theme/type_scale.dart';
 import '../models/message_model.dart';
+import '../services/haptics.dart';
 import '../services/llm_service.dart';
 import 'faithful/stream.dart';
 import 'faithful/widgets.dart';
 
 class ChatBubble extends StatelessWidget {
   final MessageModel message;
+
   /// If true, this is the last AI message and we show speed info
   final bool showSpeed;
 
@@ -70,9 +73,7 @@ class ChatBubble extends StatelessWidget {
           const SizedBox(width: 14),
 
           // Content
-          Expanded(
-            child: _buildContent(context, isUser),
-          ),
+          Expanded(child: _buildContent(context, isUser)),
         ],
       ),
     );
@@ -84,11 +85,7 @@ class ChatBubble extends StatelessWidget {
         padding: const EdgeInsets.only(top: 3),
         child: Text(
           message.content,
-          style: TextStyle(
-            fontSize: 15,
-            color: context.text,
-            height: 1.6,
-          ),
+          style: TS.body(context, color: context.text),
         ),
       );
     }
@@ -103,7 +100,10 @@ class ChatBubble extends StatelessWidget {
           padding: const EdgeInsets.only(top: 3),
           child: TextShimmerWave(
             text: 'Generating',
-            style: TextStyle(fontSize: 14, color: context.textM),
+            style: TextStyle(
+              fontSize: TS.of(context, 14),
+              color: context.textM,
+            ),
           ),
         );
       }
@@ -112,15 +112,21 @@ class ChatBubble extends StatelessWidget {
         child: isRegenerating
             ? RegenRevealText(
                 text: message.content,
-                style:
-                    TextStyle(fontSize: 15, height: 1.6, color: context.text),
+                style: TextStyle(
+                  fontSize: TS.of(context, 15),
+                  height: 1.6,
+                  color: context.text,
+                ),
               )
             : StreamReplyText(
                 text: message.content,
                 streaming: true,
                 caretColor: AppColors.accent,
-                style:
-                    TextStyle(fontSize: 15, height: 1.6, color: context.text),
+                style: TextStyle(
+                  fontSize: TS.of(context, 15),
+                  height: 1.6,
+                  color: context.text,
+                ),
               ),
       );
     }
@@ -135,10 +141,26 @@ class ChatBubble extends StatelessWidget {
             data: message.content,
             selectable: true,
             styleSheet: MarkdownStyleSheet(
-              p: TextStyle(fontSize: 15, color: context.text, height: 1.7),
-              h1: TextStyle(fontSize: 20, fontWeight: FontWeight.w700, color: context.text),
-              h2: TextStyle(fontSize: 18, fontWeight: FontWeight.w600, color: context.text),
-              h3: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: context.text),
+              p: TextStyle(
+                fontSize: TS.of(context, 15),
+                color: context.text,
+                height: 1.7,
+              ),
+              h1: TextStyle(
+                fontSize: 20,
+                fontWeight: FontWeight.w700,
+                color: context.text,
+              ),
+              h2: TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.w600,
+                color: context.text,
+              ),
+              h3: TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.w600,
+                color: context.text,
+              ),
               code: TextStyle(
                 fontFamily: 'monospace',
                 fontSize: 13,
@@ -158,12 +180,22 @@ class ChatBubble extends StatelessWidget {
                   left: BorderSide(color: AppColors.accent, width: 3),
                 ),
               ),
-              blockquotePadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+              blockquotePadding: const EdgeInsets.symmetric(
+                horizontal: 14,
+                vertical: 8,
+              ),
               listBullet: TextStyle(color: context.text),
-              tableHead: TextStyle(fontWeight: FontWeight.w600, color: context.text, fontSize: 14),
+              tableHead: TextStyle(
+                fontWeight: FontWeight.w600,
+                color: context.text,
+                fontSize: 14,
+              ),
               tableBody: TextStyle(color: context.text, fontSize: 14),
               tableBorder: TableBorder.all(color: context.border),
-              tableCellsPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              tableCellsPadding: const EdgeInsets.symmetric(
+                horizontal: 12,
+                vertical: 8,
+              ),
               horizontalRuleDecoration: BoxDecoration(
                 border: Border(top: BorderSide(color: context.border)),
               ),
@@ -180,6 +212,7 @@ class ChatBubble extends StatelessWidget {
                 // Copy button
                 InkWell(
                   onTap: () {
+                    TapFx.light();
                     Clipboard.setData(ClipboardData(text: message.content));
                     ScaffoldMessenger.of(context).showSnackBar(
                       const SnackBar(
@@ -191,13 +224,23 @@ class ChatBubble extends StatelessWidget {
                   },
                   borderRadius: BorderRadius.circular(4),
                   child: Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 4,
+                      vertical: 2,
+                    ),
                     child: Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        Icon(Icons.copy_rounded, size: 14, color: context.textD),
+                        Icon(
+                          Icons.copy_rounded,
+                          size: 14,
+                          color: context.textD,
+                        ),
                         const SizedBox(width: 4),
-                        Text('Copy', style: TextStyle(fontSize: 12, color: context.textD)),
+                        Text(
+                          'Copy',
+                          style: TextStyle(fontSize: 12, color: context.textD),
+                        ),
                       ],
                     ),
                   ),
@@ -210,13 +253,26 @@ class ChatBubble extends StatelessWidget {
                     onTap: onRegenerate,
                     borderRadius: BorderRadius.circular(4),
                     child: Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 4,
+                        vertical: 2,
+                      ),
                       child: Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          Icon(Icons.refresh_rounded, size: 14, color: context.textD),
+                          Icon(
+                            Icons.refresh_rounded,
+                            size: 14,
+                            color: context.textD,
+                          ),
                           const SizedBox(width: 4),
-                          Text('Regenerate', style: TextStyle(fontSize: 12, color: context.textD)),
+                          Text(
+                            'Regenerate',
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: context.textD,
+                            ),
+                          ),
                         ],
                       ),
                     ),
@@ -235,16 +291,21 @@ class ChatBubble extends StatelessWidget {
                     return Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
-                        Icon(Icons.speed_rounded, size: 14, color: context.textD),
+                        Icon(
+                          Icons.speed_rounded,
+                          size: 14,
+                          color: context.textD,
+                        ),
                         const SizedBox(width: 4),
                         SpringNumber(
                           value: speed,
                           decimals: 1,
                           style: TextStyle(fontSize: 12, color: context.textD),
                         ),
-                        Text(' t/s',
-                            style:
-                                TextStyle(fontSize: 12, color: context.textD)),
+                        Text(
+                          ' t/s',
+                          style: TextStyle(fontSize: 12, color: context.textD),
+                        ),
                       ],
                     );
                   }),

@@ -38,6 +38,7 @@ class LocalApiServerService extends GetxService {
     }
     return 'http://$defaultHost:${port.value}/v1';
   }
+
   bool get isBusy => _llm.isGenerating.value;
   bool get hasLoadedModel => _llm.isLoaded.value;
   String get modelId => _llm.publicModelId;
@@ -66,11 +67,7 @@ class LocalApiServerService extends GetxService {
           ? InternetAddress.anyIPv4
           : InternetAddress.loopbackIPv4;
 
-      _server = await HttpServer.bind(
-        bindAddress,
-        nextPort,
-        shared: false,
-      );
+      _server = await HttpServer.bind(bindAddress, nextPort, shared: false);
       port.value = nextPort;
       _storage.localApiServerPort = nextPort;
       _storage.localApiServerEnabled = true;
@@ -95,7 +92,7 @@ class LocalApiServerService extends GetxService {
       _server = null;
       isRunning.value = false;
       errorMessage.value = e.toString();
-      // Do not rethrow here, so that app initialization can continue 
+      // Do not rethrow here, so that app initialization can continue
       // even if the local API server fails to bind.
     } finally {
       isStarting.value = false;
@@ -185,6 +182,18 @@ class LocalApiServerService extends GetxService {
         return;
       }
 
+      // Phone-as-node (T-05): the Ollama-shaped surface the Seven
+      // Mesh probes and routes to when this phone joins as a node.
+      if (request.method == 'GET' && path == '/api/tags') {
+        await _writeJson(request.response, _ollamaTagsJson());
+        return;
+      }
+
+      if (request.method == 'POST' && path == '/api/chat') {
+        await _handleOllamaChat(request);
+        return;
+      }
+
       if (path.startsWith('/admin/')) {
         await _handleAdmin(request, path);
         return;
@@ -240,6 +249,140 @@ class LocalApiServerService extends GetxService {
         : <Map<String, dynamic>>[];
 
     return {'object': 'list', 'data': data};
+  }
+
+  // ── Ollama bridge (phone-as-node, T-05) ───────────────────────
+
+  Map<String, dynamic> _ollamaTagsJson() {
+    final ctrl = Get.find<ModelController>();
+    final models = <Map<String, dynamic>>[];
+    for (final filename in ctrl.downloadedModels) {
+      final info = ctrl.getModelInfo(filename);
+      final name = info?.name ?? filename;
+      int size = 0;
+      try {
+        size = File(ctrl.modelPathFor(filename)).lengthSync();
+      } catch (_) {}
+      models.add({
+        'name': name,
+        'model': name,
+        'size': size,
+        'modified_at': DateTime.now().toUtc().toIso8601String(),
+        'details': <String, dynamic>{},
+      });
+    }
+    return {'models': models};
+  }
+
+  Future<void> _handleOllamaChat(HttpRequest request) async {
+    final body = await _readJsonObject(request);
+    final modelName = body['model']?.toString() ?? '';
+    final rawMessages = (body['messages'] as List?) ?? const [];
+    final stream = body['stream'] != false;
+
+    final ctrl = Get.find<ModelController>();
+    String? filename;
+    for (final f in ctrl.downloadedModels) {
+      if (f == modelName || ctrl.getModelInfo(f)?.name == modelName) {
+        filename = f;
+        break;
+      }
+    }
+    if (filename == null) {
+      await _writeJson(request.response, {
+        'error': 'model "$modelName" not found on this phone',
+      }, statusCode: HttpStatus.notFound);
+      return;
+    }
+    if (isBusy) {
+      await _writeJson(request.response, {
+        'error': 'this phone is already generating',
+      }, statusCode: HttpStatus.tooManyRequests);
+      return;
+    }
+    if (ctrl.selectedModelFilename.value != filename || !hasLoadedModel) {
+      await ctrl.loadModel(filename);
+    }
+    if (!hasLoadedModel) {
+      await _writeJson(request.response, {
+        'error': 'the model failed to load on this phone',
+      }, statusCode: HttpStatus.internalServerError);
+      return;
+    }
+
+    final messages = <LlamaChatMessage>[];
+    String lastUser = '';
+    for (final raw in rawMessages) {
+      final m = Map<String, dynamic>.from(raw as Map);
+      final roleStr = m['role']?.toString() ?? 'user';
+      final content = m['content']?.toString() ?? '';
+      final role = switch (roleStr) {
+        'system' => LlamaChatRole.system,
+        'assistant' => LlamaChatRole.assistant,
+        _ => LlamaChatRole.user,
+      };
+      if (role == LlamaChatRole.user) lastUser = content;
+      messages.add(LlamaChatMessage.fromText(role: role, text: content));
+    }
+
+    _noteAdmin(request, 'Mesh ran a generation on this phone');
+    final tokens = _llm.generateChatCompletion(messages: messages);
+
+    // Ticket 26 rule: remote runs materialize in the chat UI.
+    final sink = StreamController<String>();
+    unawaited(
+      Get.find<ChatController>()
+          .runRemoteTurn(
+            userText: lastUser,
+            tokenStream: sink.stream,
+            modelFilename: filename,
+          )
+          .catchError((_) {}),
+    );
+
+    final resp = request.response;
+    if (!stream) {
+      final buf = StringBuffer();
+      await for (final t in tokens) {
+        buf.write(t);
+        sink.add(t);
+      }
+      await sink.close();
+      await _writeJson(resp, {
+        'model': modelName,
+        'created_at': DateTime.now().toUtc().toIso8601String(),
+        'message': {'role': 'assistant', 'content': buf.toString()},
+        'done': true,
+        'done_reason': 'stop',
+      });
+      return;
+    }
+
+    resp.statusCode = HttpStatus.ok;
+    resp.headers.contentType = ContentType.json;
+    await for (final t in tokens) {
+      sink.add(t);
+      resp.write(
+        '${jsonEncode({
+          'model': modelName,
+          'created_at': DateTime.now().toUtc().toIso8601String(),
+          'message': {'role': 'assistant', 'content': t},
+          'done': false,
+        })}\n',
+      );
+      await resp.flush();
+    }
+    await sink.close();
+    resp.write(
+      '${jsonEncode({
+        'model': modelName,
+        'created_at': DateTime.now().toUtc().toIso8601String(),
+        'message': {'role': 'assistant', 'content': ''},
+        'done': true,
+        'done_reason': 'stop',
+      })}\n',
+    );
+    await resp.close();
   }
 
   Future<void> _handleChatCompletions(HttpRequest request) async {
@@ -346,10 +489,9 @@ class LocalApiServerService extends GetxService {
     // Honest finish_reason (UPDATE 3): 'length' when the completion
     // ran to the requested token cap, 'stop' otherwise - the old code
     // hardcoded 'stop' even for capped runs.
-    final finishReason =
-        usage['completion_tokens']! >= request.params.maxTokens
-            ? 'length'
-            : 'stop';
+    final finishReason = usage['completion_tokens']! >= request.params.maxTokens
+        ? 'length'
+        : 'stop';
 
     return {
       'id': id,
@@ -415,10 +557,9 @@ class LocalApiServerService extends GetxService {
           id: id,
           created: created,
           delta: <String, dynamic>{},
-          finishReason:
-              usage['completion_tokens']! >= request.params.maxTokens
-                  ? 'length'
-                  : 'stop',
+          finishReason: usage['completion_tokens']! >= request.params.maxTokens
+              ? 'length'
+              : 'stop',
         ),
       );
       response.write('data: [DONE]\n\n');
@@ -654,14 +795,13 @@ class LocalApiServerService extends GetxService {
     }, statusCode: statusCode);
   }
 
-
   // ── Astro Remote Control (ticket 21) ───────────────────────
   // Token-gated admin surface on the same server. The app only ever
   // LISTENS (offline law); every /admin route requires the per-install
   // token, on loopback too. The token is generated on first use and
   // shown in the API screen; regenerating invalidates the old one.
 
-  static const appVersion = '1.13.1';
+  static const appVersion = '1.14.0';
 
   String get adminToken {
     var token = _storage.adminToken;
@@ -684,10 +824,7 @@ class LocalApiServerService extends GetxService {
 
   String _generateAdminToken() {
     final rng = Random.secure();
-    return List.generate(
-      32,
-      (_) => rng.nextInt(16).toRadixString(16),
-    ).join();
+    return List.generate(32, (_) => rng.nextInt(16).toRadixString(16)).join();
   }
 
   bool _adminAuthorized(HttpRequest request) {

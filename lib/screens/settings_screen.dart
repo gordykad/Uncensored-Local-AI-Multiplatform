@@ -15,6 +15,8 @@ import '../controllers/chat_controller.dart';
 import '../controllers/model_controller.dart';
 import '../services/local_api_server_service.dart';
 import '../services/mesh_service.dart';
+import '../services/haptics.dart';
+import '../services/phone_node.dart';
 import '../services/custom_connections_service.dart';
 import '../services/model_manager.dart';
 import '../services/background_optimizer_service.dart';
@@ -139,7 +141,10 @@ class _SettingsBody extends StatelessWidget {
                             const SizedBox(height: 3),
                             Text(
                               'Black box build \u00b7 dark only, by law',
-                              style: TextStyle(fontSize: 11.5, color: context.textD),
+                              style: TextStyle(
+                                fontSize: 11.5,
+                                color: context.textD,
+                              ),
                             ),
                           ],
                         ),
@@ -165,15 +170,22 @@ class _SettingsBody extends StatelessWidget {
                       style: TextStyle(color: context.textD, fontSize: 12),
                     ),
                     trailing: FutureBuilder<bool>(
-                      future: BackgroundOptimizerService.isOptimizationDisabled(),
+                      future:
+                          BackgroundOptimizerService.isOptimizationDisabled(),
                       builder: (context, snapshot) {
                         final disabled = snapshot.data ?? false;
                         if (disabled) {
-                          return const Icon(Icons.check_circle_rounded,
-                              color: AppColors.green, size: 20);
+                          return const Icon(
+                            Icons.check_circle_rounded,
+                            color: AppColors.green,
+                            size: 20,
+                          );
                         }
-                        return const Icon(Icons.arrow_forward_ios_rounded,
-                            size: 14, color: AppColors.orange);
+                        return const Icon(
+                          Icons.arrow_forward_ios_rounded,
+                          size: 14,
+                          color: AppColors.orange,
+                        );
                       },
                     ),
                     contentPadding: const EdgeInsets.symmetric(
@@ -364,12 +376,18 @@ class _SettingsBody extends StatelessWidget {
                                 children: [
                                   Text(
                                     'Local API server',
-                                    style: TextStyle(color: context.text, fontSize: 14),
+                                    style: TextStyle(
+                                      color: context.text,
+                                      fontSize: 14,
+                                    ),
                                   ),
                                   const SizedBox(height: 2),
                                   Text(
                                     'OpenAI base URL: ${apiServer.baseUrl}',
-                                    style: TextStyle(color: context.textD, fontSize: 12),
+                                    style: TextStyle(
+                                      color: context.textD,
+                                      fontSize: 12,
+                                    ),
                                   ),
                                 ],
                               ),
@@ -405,12 +423,18 @@ class _SettingsBody extends StatelessWidget {
                                 children: [
                                   Text(
                                     'Allow External Connections',
-                                    style: TextStyle(color: context.text, fontSize: 14),
+                                    style: TextStyle(
+                                      color: context.text,
+                                      fontSize: 14,
+                                    ),
                                   ),
                                   const SizedBox(height: 2),
                                   Text(
                                     'Listen on 0.0.0.0 instead of localhost',
-                                    style: TextStyle(color: context.textD, fontSize: 12),
+                                    style: TextStyle(
+                                      color: context.textD,
+                                      fontSize: 12,
+                                    ),
                                   ),
                                 ],
                               ),
@@ -421,7 +445,9 @@ class _SettingsBody extends StatelessWidget {
                                   ? (_) {}
                                   : (enabled) async {
                                       try {
-                                        await apiServer.setAllInterfaces(enabled);
+                                        await apiServer.setAllInterfaces(
+                                          enabled,
+                                        );
                                       } catch (e) {
                                         Get.snackbar(
                                           'Settings Error',
@@ -441,23 +467,31 @@ class _SettingsBody extends StatelessWidget {
                               children: [
                                 Expanded(
                                   child: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
                                     children: [
                                       Text(
                                         'Connectivity',
-                                        style: TextStyle(color: context.text, fontSize: 14),
+                                        style: TextStyle(
+                                          color: context.text,
+                                          fontSize: 14,
+                                        ),
                                       ),
                                       const SizedBox(height: 2),
                                       Text(
                                         'Hosted image lanes + shared config. Local models and the local API are unaffected when off.',
-                                        style: TextStyle(color: context.textD, fontSize: 12),
+                                        style: TextStyle(
+                                          color: context.textD,
+                                          fontSize: 12,
+                                        ),
                                       ),
                                     ],
                                   ),
                                 ),
                                 MinixSwitch(
                                   value: svc.connectivityOn,
-                                  onChanged: (v) => setRow(() => svc.connectivityOn = v),
+                                  onChanged: (v) =>
+                                      setRow(() => svc.connectivityOn = v),
                                 ),
                               ],
                             );
@@ -469,17 +503,26 @@ class _SettingsBody extends StatelessWidget {
                             padding: const EdgeInsets.all(8),
                             decoration: BoxDecoration(
                               color: AppColors.orange.withOpacity(0.1),
-                              border: Border.all(color: AppColors.orange.withOpacity(0.3)),
+                              border: Border.all(
+                                color: AppColors.orange.withOpacity(0.3),
+                              ),
                               borderRadius: BorderRadius.circular(8),
                             ),
                             child: Row(
                               children: [
-                                const Icon(Icons.warning_amber_rounded, size: 16, color: AppColors.orange),
+                                const Icon(
+                                  Icons.warning_amber_rounded,
+                                  size: 16,
+                                  color: AppColors.orange,
+                                ),
                                 const SizedBox(width: 8),
                                 Expanded(
                                   child: Text(
                                     'Anyone on your network can access your loaded model.',
-                                    style: TextStyle(fontSize: 11, color: context.text),
+                                    style: TextStyle(
+                                      fontSize: 11,
+                                      color: context.text,
+                                    ),
                                   ),
                                 ),
                               ],
@@ -497,8 +540,10 @@ class _SettingsBody extends StatelessWidget {
                                     : Future.value(null),
                                 builder: (context, snapshot) {
                                   String url = apiServer.baseUrl;
-                                  if (apiServer.allInterfaces.value && snapshot.hasData) {
-                                    url = 'http://${snapshot.data}:${apiServer.port.value}/v1';
+                                  if (apiServer.allInterfaces.value &&
+                                      snapshot.hasData) {
+                                    url =
+                                        'http://${snapshot.data}:${apiServer.port.value}/v1';
                                   }
                                   return SelectableText(
                                     url,
@@ -508,7 +553,7 @@ class _SettingsBody extends StatelessWidget {
                                       fontWeight: FontWeight.w500,
                                     ),
                                   );
-                                }
+                                },
                               ),
                             ),
                           ],
@@ -730,7 +775,7 @@ class _SettingsBody extends StatelessWidget {
               ),
 
               const SizedBox(height: 12),
-              
+
               OutlinedButton.icon(
                 icon: const Icon(Icons.cleaning_services_rounded, size: 18),
                 label: const Text(
@@ -788,7 +833,7 @@ class _SettingsBody extends StatelessWidget {
                     ),
                     const SizedBox(height: 10),
                     Text(
-                      'Astro MiniX 1.13.1 \u00b7 Powered by llamadart + llama.cpp',
+                      'Astro MiniX 1.14.0 \u00b7 Powered by llamadart + llama.cpp',
                       style: TextStyle(fontSize: 11, color: context.textD),
                     ),
                   ],
@@ -811,8 +856,11 @@ class _SettingsBody extends StatelessWidget {
                       color: AppColors.orange.withValues(alpha: 0.12),
                       borderRadius: BorderRadius.circular(8),
                     ),
-                    child: const Icon(Icons.article_outlined,
-                        size: 18, color: AppColors.orange),
+                    child: const Icon(
+                      Icons.article_outlined,
+                      size: 18,
+                      color: AppColors.orange,
+                    ),
                   ),
                   title: Text(
                     'App Logs',
@@ -822,8 +870,11 @@ class _SettingsBody extends StatelessWidget {
                     'View logs, errors & share with developers',
                     style: TextStyle(color: context.textD, fontSize: 12),
                   ),
-                  trailing: Icon(Icons.arrow_forward_ios_rounded,
-                      size: 14, color: context.textD),
+                  trailing: Icon(
+                    Icons.arrow_forward_ios_rounded,
+                    size: 14,
+                    color: context.textD,
+                  ),
                   contentPadding: const EdgeInsets.symmetric(
                     horizontal: 16,
                     vertical: 4,
@@ -905,7 +956,11 @@ class _HardwareSettingsCardState extends State<_HardwareSettingsCard> {
   static Map<String, dynamic> _detectBestConfig() {
     if (!Platform.isAndroid && !Platform.isIOS) {
       // Desktop: CPU is safest, Vulkan if available
-      return {'backend': 'cpu', 'gpuLayers': 0, 'reason': 'CPU mode — most compatible on desktop'};
+      return {
+        'backend': 'cpu',
+        'gpuLayers': 0,
+        'reason': 'CPU mode — most compatible on desktop',
+      };
     }
 
     if (Platform.isIOS) {
@@ -921,7 +976,7 @@ class _HardwareSettingsCardState extends State<_HardwareSettingsCard> {
 
     // Android: detect available RAM and processor count
     final cores = Platform.numberOfProcessors;
-    
+
     if (cores >= 8) {
       // High-end device (e.g. Snapdragon 8 Gen 2+, Dimensity 9000+)
       return {
@@ -1025,11 +1080,19 @@ class _HardwareSettingsCardState extends State<_HardwareSettingsCard> {
           // ── Recommended Auto Config ──
           Row(
             children: [
-              Icon(Icons.auto_awesome_rounded, size: 18, color: AppColors.accent),
+              Icon(
+                Icons.auto_awesome_rounded,
+                size: 18,
+                color: AppColors.accent,
+              ),
               const SizedBox(width: 8),
               Text(
                 'Compute Device',
-                style: TextStyle(color: context.text, fontSize: 15, fontWeight: FontWeight.w600),
+                style: TextStyle(
+                  color: context.text,
+                  fontSize: 15,
+                  fontWeight: FontWeight.w600,
+                ),
               ),
             ],
           ),
@@ -1052,7 +1115,9 @@ class _HardwareSettingsCardState extends State<_HardwareSettingsCard> {
                 foregroundColor: Colors.white,
                 elevation: 0,
                 padding: const EdgeInsets.symmetric(vertical: 12),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(8),
+                ),
               ),
             ),
           ),
@@ -1065,7 +1130,11 @@ class _HardwareSettingsCardState extends State<_HardwareSettingsCard> {
             ),
             child: Row(
               children: [
-                Icon(Icons.info_outline_rounded, size: 14, color: AppColors.accent),
+                Icon(
+                  Icons.info_outline_rounded,
+                  size: 14,
+                  color: AppColors.accent,
+                ),
                 const SizedBox(width: 8),
                 Expanded(
                   child: Text(
@@ -1110,8 +1179,7 @@ class _HardwareSettingsCardState extends State<_HardwareSettingsCard> {
             const SizedBox(height: 12),
             MinixSegmented(
               options: _backendOptionLabels(),
-              index:
-                  _backendOptionValues().indexOf(_backend).clamp(0, 2),
+              index: _backendOptionValues().indexOf(_backend).clamp(0, 2),
               onChanged: (i) => _saveBackend(_backendOptionValues()[i]),
             ),
             const SizedBox(height: 16),
@@ -1123,14 +1191,20 @@ class _HardwareSettingsCardState extends State<_HardwareSettingsCard> {
                   style: TextStyle(color: context.text, fontSize: 14),
                 ),
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 6,
+                  ),
                   decoration: BoxDecoration(
                     color: context.bgInput,
                     borderRadius: BorderRadius.circular(8),
                   ),
                   child: Text(
                     _gpuLayers.toInt().toString(),
-                    style: TextStyle(color: context.text, fontWeight: FontWeight.bold),
+                    style: TextStyle(
+                      color: context.text,
+                      fontWeight: FontWeight.bold,
+                    ),
                   ),
                 ),
               ],
@@ -1162,7 +1236,11 @@ class _HardwareSettingsCardState extends State<_HardwareSettingsCard> {
                 const SizedBox(width: 8),
                 Text(
                   'Engine Knobs',
-                  style: TextStyle(color: context.text, fontSize: 14, fontWeight: FontWeight.w600),
+                  style: TextStyle(
+                    color: context.text,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                  ),
                 ),
               ],
             ),
@@ -1172,22 +1250,32 @@ class _HardwareSettingsCardState extends State<_HardwareSettingsCard> {
               style: TextStyle(color: context.textD, fontSize: 11),
             ),
             const SizedBox(height: 12),
-            Text('Context Size', style: TextStyle(color: context.text, fontSize: 14)),
+            Text(
+              'Context Size',
+              style: TextStyle(color: context.text, fontSize: 14),
+            ),
             const SizedBox(height: 8),
             MinixSegmented(
               options: const ['Default', '1024', '2048', '4096', '8192'],
-              index:
-                  const [0, 1024, 2048, 4096, 8192].indexOf(_contextSize).clamp(0, 4),
+              index: const [
+                0,
+                1024,
+                2048,
+                4096,
+                8192,
+              ].indexOf(_contextSize).clamp(0, 4),
               onChanged: (i) =>
                   _onContextSelected(const [0, 1024, 2048, 4096, 8192][i]),
             ),
             const SizedBox(height: 16),
-            Text('Threads', style: TextStyle(color: context.text, fontSize: 14)),
+            Text(
+              'Threads',
+              style: TextStyle(color: context.text, fontSize: 14),
+            ),
             const SizedBox(height: 8),
             MinixSegmented(
               options: const ['Auto', '2', '4', '6', '8'],
-              index:
-                  const [0, 2, 4, 6, 8].indexOf(_threadCount).clamp(0, 4),
+              index: const [0, 2, 4, 6, 8].indexOf(_threadCount).clamp(0, 4),
               onChanged: (i) {
                 const values = [0, 2, 4, 6, 8];
                 setState(() => _threadCount = values[i]);
@@ -1195,12 +1283,18 @@ class _HardwareSettingsCardState extends State<_HardwareSettingsCard> {
               },
             ),
             const SizedBox(height: 16),
-            Text('Flash Attention', style: TextStyle(color: context.text, fontSize: 14)),
+            Text(
+              'Flash Attention',
+              style: TextStyle(color: context.text, fontSize: 14),
+            ),
             const SizedBox(height: 8),
             MinixSegmented(
               options: const ['On', 'Auto', 'Off'],
-              index:
-                  const ['on', 'auto', 'off'].indexOf(_flashMode).clamp(0, 2),
+              index: const [
+                'on',
+                'auto',
+                'off',
+              ].indexOf(_flashMode).clamp(0, 2),
               onChanged: (i) {
                 const values = ['on', 'auto', 'off'];
                 setState(() => _flashMode = values[i]);
@@ -1299,32 +1393,34 @@ class _HardwareSettingsCardState extends State<_HardwareSettingsCard> {
     for (var i = 0; i < values.length; i++) {
       if (i > 0) widgets.add(const SizedBox(width: 6));
       final isSel = values[i] == selected;
-      widgets.add(Expanded(
-        child: InkWell(
-          onTap: () => onTap(values[i]),
-          borderRadius: BorderRadius.circular(8),
-          child: Container(
-            padding: const EdgeInsets.symmetric(vertical: 9),
-            decoration: BoxDecoration(
-              color: isSel ? AppColors.accent : context.bgInput,
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(
-                color: isSel ? AppColors.accent : context.border,
+      widgets.add(
+        Expanded(
+          child: InkWell(
+            onTap: () => onTap(values[i]),
+            borderRadius: BorderRadius.circular(8),
+            child: Container(
+              padding: const EdgeInsets.symmetric(vertical: 9),
+              decoration: BoxDecoration(
+                color: isSel ? AppColors.accent : context.bgInput,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(
+                  color: isSel ? AppColors.accent : context.border,
+                ),
               ),
-            ),
-            child: Center(
-              child: Text(
-                labels[i],
-                style: TextStyle(
-                  color: isSel ? Colors.white : context.text,
-                  fontSize: 11,
-                  fontWeight: isSel ? FontWeight.bold : FontWeight.normal,
+              child: Center(
+                child: Text(
+                  labels[i],
+                  style: TextStyle(
+                    color: isSel ? Colors.white : context.text,
+                    fontSize: 11,
+                    fontWeight: isSel ? FontWeight.bold : FontWeight.normal,
+                  ),
                 ),
               ),
             ),
           ),
         ),
-      ));
+      );
     }
     return widgets;
   }
@@ -1361,7 +1457,6 @@ class _HardwareSettingsCardState extends State<_HardwareSettingsCard> {
   }
 }
 
-
 // ── Ticket 31: Mesh settings card ──────────────────────────────
 
 class _MeshSettingsCard extends StatefulWidget {
@@ -1375,11 +1470,14 @@ class _MeshSettingsCardState extends State<_MeshSettingsCard> {
   final _svc = MeshService();
   late final TextEditingController _addr;
   String _status = 'Checking...';
+  bool _phoneNode = false;
+  bool _phoneNodeBusy = false;
 
   @override
   void initState() {
     super.initState();
     _addr = TextEditingController(text: _svc.address);
+    _phoneNode = _svc.phoneNodeOn;
     _refresh();
   }
 
@@ -1418,9 +1516,11 @@ class _MeshSettingsCardState extends State<_MeshSettingsCard> {
               labelText: 'Mesh address (host:port)',
               labelStyle: TextStyle(color: context.textM, fontSize: 12),
               enabledBorder: UnderlineInputBorder(
-                  borderSide: BorderSide(color: context.border)),
+                borderSide: BorderSide(color: context.border),
+              ),
               focusedBorder: const UnderlineInputBorder(
-                  borderSide: BorderSide(color: AppColors.accent)),
+                borderSide: BorderSide(color: AppColors.accent),
+              ),
             ),
           ),
           const SizedBox(height: 10),
@@ -1442,6 +1542,63 @@ class _MeshSettingsCardState extends State<_MeshSettingsCard> {
               ),
             ],
           ),
+          const Divider(height: 24),
+          // Phone-as-node (T-05): this phone joins the mesh and
+          // answers chats routed to it, Ollama-style, over the
+          // tailnet. The local API serves the tailnet while on.
+          Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Offer this phone as a mesh node',
+                      style: TextStyle(fontSize: 13, color: context.text),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      _phoneNodeBusy
+                          ? 'Working...'
+                          : _phoneNode
+                          ? 'Joined as node "phone" - the mesh can route chats to this phone\'s models'
+                          : 'The mesh can route chats to this phone\'s local models over your tailnet',
+                      style: TextStyle(fontSize: 11, color: context.textM),
+                    ),
+                  ],
+                ),
+              ),
+              Switch(
+                value: _phoneNode,
+                activeThumbColor: AppColors.accent,
+                onChanged: _phoneNodeBusy
+                    ? null
+                    : (v) async {
+                        TapFx.select();
+                        setState(() => _phoneNodeBusy = true);
+                        final ok = await setPhoneNode(v);
+                        if (!mounted) return;
+                        setState(() {
+                          _phoneNodeBusy = false;
+                          _phoneNode = ok ? v : _svc.phoneNodeOn;
+                        });
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            backgroundColor: context.bgPanel,
+                            content: Text(
+                              ok
+                                  ? (v
+                                        ? 'This phone is on the mesh as node "phone"'
+                                        : 'Phone node off - the mesh will forget this phone in about 3 minutes')
+                                  : 'No tailnet address found - is Tailscale up on this phone?',
+                              style: TextStyle(color: context.text),
+                            ),
+                          ),
+                        );
+                      },
+              ),
+            ],
+          ),
         ],
       ),
     );
@@ -1454,8 +1611,7 @@ class _CustomConnectionsCard extends StatefulWidget {
   const _CustomConnectionsCard();
 
   @override
-  State<_CustomConnectionsCard> createState() =>
-      _CustomConnectionsCardState();
+  State<_CustomConnectionsCard> createState() => _CustomConnectionsCardState();
 }
 
 class _CustomConnectionsCardState extends State<_CustomConnectionsCard> {
@@ -1477,9 +1633,11 @@ class _CustomConnectionsCardState extends State<_CustomConnectionsCard> {
           labelText: label,
           labelStyle: TextStyle(color: context.textM, fontSize: 12),
           enabledBorder: UnderlineInputBorder(
-              borderSide: BorderSide(color: context.border)),
+            borderSide: BorderSide(color: context.border),
+          ),
           focusedBorder: const UnderlineInputBorder(
-              borderSide: BorderSide(color: AppColors.accent)),
+            borderSide: BorderSide(color: AppColors.accent),
+          ),
         ),
       ),
     );
@@ -1512,8 +1670,7 @@ class _CustomConnectionsCardState extends State<_CustomConnectionsCard> {
                   children: [
                     Text(
                       'API type',
-                      style:
-                          TextStyle(color: dlgCtx.textM, fontSize: 12),
+                      style: TextStyle(color: dlgCtx.textM, fontSize: 12),
                     ),
                     const Spacer(),
                     DropdownButton<String>(
@@ -1522,12 +1679,15 @@ class _CustomConnectionsCardState extends State<_CustomConnectionsCard> {
                       style: TextStyle(color: dlgCtx.text, fontSize: 13),
                       items: const [
                         DropdownMenuItem(
-                            value: 'openai', child: Text('OpenAI')),
+                          value: 'openai',
+                          child: Text('OpenAI'),
+                        ),
                         DropdownMenuItem(
-                            value: 'ollama', child: Text('Ollama')),
+                          value: 'ollama',
+                          child: Text('Ollama'),
+                        ),
                       ],
-                      onChanged: (v) =>
-                          setDlg(() => type = v ?? 'openai'),
+                      onChanged: (v) => setDlg(() => type = v ?? 'openai'),
                     ),
                   ],
                 ),
@@ -1564,8 +1724,7 @@ class _CustomConnectionsCardState extends State<_CustomConnectionsCard> {
       return;
     }
     final conn = CustomConnection(
-      id: existing?.id ??
-          'c${DateTime.now().millisecondsSinceEpoch}',
+      id: existing?.id ?? 'c${DateTime.now().millisecondsSinceEpoch}',
       name: name.text.trim(),
       baseUrl: CustomConnection.normalizeBase(base.text, type),
       model: model.text.trim(),
@@ -1601,8 +1760,7 @@ class _CustomConnectionsCardState extends State<_CustomConnectionsCard> {
           for (final c in conns)
             Row(
               children: [
-                Icon(Icons.link_outlined,
-                    size: 16, color: context.textM),
+                Icon(Icons.link_outlined, size: 16, color: context.textM),
                 const SizedBox(width: 10),
                 Expanded(
                   child: Column(
@@ -1610,27 +1768,31 @@ class _CustomConnectionsCardState extends State<_CustomConnectionsCard> {
                     children: [
                       Text(
                         c.name,
-                        style:
-                            TextStyle(fontSize: 13, color: context.text),
+                        style: TextStyle(fontSize: 13, color: context.text),
                         overflow: TextOverflow.ellipsis,
                       ),
                       Text(
                         '${c.model} - ${c.type == 'ollama' ? 'Ollama API' : 'OpenAI API'}',
-                        style: TextStyle(
-                            fontSize: 11, color: context.textM),
+                        style: TextStyle(fontSize: 11, color: context.textM),
                         overflow: TextOverflow.ellipsis,
                       ),
                     ],
                   ),
                 ),
                 IconButton(
-                  icon: Icon(Icons.edit_outlined,
-                      size: 18, color: context.textM),
+                  icon: Icon(
+                    Icons.edit_outlined,
+                    size: 18,
+                    color: context.textM,
+                  ),
                   onPressed: () => _form(c),
                 ),
                 IconButton(
-                  icon: const Icon(Icons.delete_outline,
-                      size: 18, color: AppColors.red),
+                  icon: const Icon(
+                    Icons.delete_outline,
+                    size: 18,
+                    color: AppColors.red,
+                  ),
                   onPressed: () {
                     _svc.remove(c.id);
                     setState(() {});

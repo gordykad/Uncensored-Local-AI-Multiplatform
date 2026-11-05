@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:flutter_animate/flutter_animate.dart';
@@ -7,6 +9,7 @@ import '../controllers/model_controller.dart';
 import '../services/model_manager.dart';
 import '../services/model_pins_service.dart';
 import '../services/mesh_service.dart';
+import '../services/haptics.dart';
 import '../services/custom_connections_service.dart';
 import '../models/ai_model_info.dart';
 import '../widgets/model_card.dart';
@@ -78,11 +81,13 @@ class _ModelLibraryBodyState extends State<_ModelLibraryBody> {
       });
     }
   }
+
   final _searchCtrl = TextEditingController();
   String _query = '';
 
   @override
   void dispose() {
+    _wakePoll?.cancel();
     _searchCtrl.dispose();
     super.dispose();
   }
@@ -199,8 +204,9 @@ class _ModelLibraryBodyState extends State<_ModelLibraryBody> {
 
             if (_query.isNotEmpty) {
               filtered = filtered
-                  .where((m) =>
-                      m.name.toLowerCase().contains(_query.toLowerCase()))
+                  .where(
+                    (m) => m.name.toLowerCase().contains(_query.toLowerCase()),
+                  )
                   .toList();
             }
 
@@ -244,8 +250,13 @@ class _ModelLibraryBodyState extends State<_ModelLibraryBody> {
               children: [
                 // ── Pinned for the fleet (ticket 30) ─────
                 if (_filter == _Filter.all && _query.isEmpty)
-                  ..._pinnedSection(context, ctrl, manager, allCatalog,
-                      downloaded),
+                  ..._pinnedSection(
+                    context,
+                    ctrl,
+                    manager,
+                    allCatalog,
+                    downloaded,
+                  ),
 
                 // ── Mesh seats + custom connections (ticket 31) ──
                 if (_filter == _Filter.all && _query.isEmpty) ...[
@@ -284,30 +295,30 @@ class _ModelLibraryBodyState extends State<_ModelLibraryBody> {
                             ? () => _pinSheet(context, model)
                             : null,
                         child: ModelCard(
-                        model: model,
-                        isDownloaded: isDl,
-                        isCurrentlyDownloading: isActiveDownload,
-                        downloadState: dlState,
-                        isLoaded:
-                            ctrl.selectedModelFilename.value ==
-                                model.filename &&
-                            ctrl.isModelLoaded,
-                        isLoadingModel:
-                            ctrl.loadingModelFilename.value == model.filename,
-                        loadingStatusMsg: ctrl.loadingStatusMsg.value,
-                        loadingProgress: ctrl.loadingProgress.value,
-                        onDownload: () => ctrl.downloadModel(model),
-                        onCancelDownload: () =>
-                            ctrl.cancelDownload(model.filename),
-                        onLoad: () => ctrl.loadModel(model.filename),
-                        onDelete: () => _confirmDelete(context, ctrl, model),
-                        onRemoveCustom: () =>
-                            _confirmRemoveCustom(context, ctrl, model),
-                        onAddLink: model.isCustom
-                            ? () => _showSetLinkDialog(context, ctrl, model)
-                            : null,
-                        onCancelLoad: () => ctrl.cancelLoadModel(),
-                        onUnload: () => ctrl.unloadCurrentModel(),
+                          model: model,
+                          isDownloaded: isDl,
+                          isCurrentlyDownloading: isActiveDownload,
+                          downloadState: dlState,
+                          isLoaded:
+                              ctrl.selectedModelFilename.value ==
+                                  model.filename &&
+                              ctrl.isModelLoaded,
+                          isLoadingModel:
+                              ctrl.loadingModelFilename.value == model.filename,
+                          loadingStatusMsg: ctrl.loadingStatusMsg.value,
+                          loadingProgress: ctrl.loadingProgress.value,
+                          onDownload: () => ctrl.downloadModel(model),
+                          onCancelDownload: () =>
+                              ctrl.cancelDownload(model.filename),
+                          onLoad: () => ctrl.loadModel(model.filename),
+                          onDelete: () => _confirmDelete(context, ctrl, model),
+                          onRemoveCustom: () =>
+                              _confirmRemoveCustom(context, ctrl, model),
+                          onAddLink: model.isCustom
+                              ? () => _showSetLinkDialog(context, ctrl, model)
+                              : null,
+                          onCancelLoad: () => ctrl.cancelLoadModel(),
+                          onUnload: () => ctrl.unloadCurrentModel(),
                         ),
                       ),
                     ],
@@ -346,7 +357,8 @@ class _ModelLibraryBodyState extends State<_ModelLibraryBody> {
           isDownloaded: downloaded.contains(p.filename),
           isCurrentlyDownloading: manager.isDownloading(p.filename),
           downloadState: manager.getDownloadState(p.filename),
-          isLoaded: ctrl.selectedModelFilename.value == p.filename &&
+          isLoaded:
+              ctrl.selectedModelFilename.value == p.filename &&
               ctrl.isModelLoaded,
           isLoadingModel: ctrl.loadingModelFilename.value == p.filename,
           loadingStatusMsg: ctrl.loadingStatusMsg.value,
@@ -378,46 +390,54 @@ class _ModelLibraryBodyState extends State<_ModelLibraryBody> {
     VoidCallback? tapOverride,
     VoidCallback? onLongPress,
     bool dimmed = false,
+    Widget? trailing,
   }) {
     final sel = ctrl.selectedRemote.value;
     final selected =
-        sel != null && sel['kind'] == source['kind'] && sel['id'] == source['id'];
+        sel != null &&
+        sel['kind'] == source['kind'] &&
+        sel['id'] == source['id'];
     return GestureDetector(
       onLongPress: onLongPress,
-      onTap: tapOverride ??
+      onTap:
+          tapOverride ??
           () {
-        if (selected) {
-          ctrl.clearRemote();
-        } else {
-          ctrl.selectRemote(source);
-        }
-        setState(() {});
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            backgroundColor: context.bgPanel,
-            content: Text(
-              selected
-                  ? 'Back to your local models'
-                  : '${source['label']} will answer in chat now',
-              style: TextStyle(color: context.text),
-            ),
-          ),
-        );
-      },
+            TapFx.select();
+            if (selected) {
+              ctrl.clearRemote();
+            } else {
+              ctrl.selectRemote(source);
+            }
+            setState(() {});
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                backgroundColor: context.bgPanel,
+                content: Text(
+                  selected
+                      ? 'Back to your local models'
+                      : '${source['label']} will answer in chat now',
+                  style: TextStyle(color: context.text),
+                ),
+              ),
+            );
+          },
       child: Container(
         margin: const EdgeInsets.only(bottom: 8),
         padding: const EdgeInsets.all(14),
         decoration: BoxDecoration(
           color: context.bgPanel,
           border: Border.all(
-              color: selected ? AppColors.accent : context.border),
+            color: selected ? AppColors.accent : context.border,
+          ),
           borderRadius: BorderRadius.circular(12),
         ),
         child: Row(
           children: [
-            Icon(icon,
-                size: 18,
-                color: selected ? AppColors.accent : context.textM),
+            Icon(
+              icon,
+              size: 18,
+              color: selected ? AppColors.accent : context.textM,
+            ),
             const SizedBox(width: 12),
             Expanded(
               child: Column(
@@ -426,24 +446,26 @@ class _ModelLibraryBodyState extends State<_ModelLibraryBody> {
                   Text(
                     title,
                     style: TextStyle(
-                        fontSize: 13,
-                        color: dimmed ? context.textM : context.text),
+                      fontSize: 13,
+                      color: dimmed ? context.textM : context.text,
+                    ),
                     overflow: TextOverflow.ellipsis,
                   ),
                   Text(
                     sub,
                     style: TextStyle(
-                        fontSize: 11,
-                        color: dimmed ? context.textD : context.textM),
+                      fontSize: 11,
+                      color: dimmed ? context.textD : context.textM,
+                    ),
                     overflow: TextOverflow.ellipsis,
                   ),
                 ],
               ),
             ),
+            if (trailing != null) ...[const SizedBox(width: 8), trailing],
             const SizedBox(width: 8),
             Container(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
               decoration: BoxDecoration(
                 border: Border.all(color: badgeColor),
                 borderRadius: BorderRadius.circular(6),
@@ -451,10 +473,11 @@ class _ModelLibraryBodyState extends State<_ModelLibraryBody> {
               child: Text(
                 badge,
                 style: TextStyle(
-                    fontSize: 9,
-                    fontWeight: FontWeight.w700,
-                    color: badgeColor,
-                    letterSpacing: 0.4),
+                  fontSize: 9,
+                  fontWeight: FontWeight.w700,
+                  color: badgeColor,
+                  letterSpacing: 0.4,
+                ),
               ),
             ),
             if (selected) ...[
@@ -462,13 +485,115 @@ class _ModelLibraryBodyState extends State<_ModelLibraryBody> {
               const Text(
                 'Answering',
                 style: TextStyle(
-                    fontSize: 11,
-                    fontWeight: FontWeight.w600,
-                    color: AppColors.accent),
+                  fontSize: 11,
+                  fontWeight: FontWeight.w600,
+                  color: AppColors.accent,
+                ),
               ),
             ],
           ],
         ),
+      ),
+    );
+  }
+
+  // Sync build (mesh 0.20): the star flip, shared by seat + node rows.
+  Widget _star(BuildContext context, String model, bool fav) {
+    return IconButton(
+      icon: Icon(
+        fav ? Icons.star : Icons.star_border,
+        size: 19,
+        color: fav ? AppColors.accentHi : context.textD,
+      ),
+      visualDensity: VisualDensity.compact,
+      constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+      onPressed: () async {
+        TapFx.select();
+        final ok = await _meshSvc.setModelFavorite(model, !fav);
+        if (!mounted || !ok) return;
+        setState(() {
+          _meshSeats = _meshSvc.cachedSeats();
+          _nodeModels = _meshSvc.cachedNodeModels();
+        });
+      },
+    );
+  }
+
+  Widget _boxPill(
+    BuildContext context,
+    String label,
+    Color color,
+    VoidCallback? onTap,
+  ) {
+    return InkWell(
+      borderRadius: BorderRadius.circular(12),
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+        decoration: BoxDecoration(
+          border: Border.all(color: color),
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            fontSize: 11,
+            fontWeight: FontWeight.w700,
+            color: color,
+          ),
+        ),
+      ),
+    );
+  }
+
+  bool _wakeWarming = false;
+  Timer? _wakePoll;
+
+  void _startWakePoll() {
+    _wakePoll?.cancel();
+    _wakePoll = Timer.periodic(const Duration(seconds: 12), (_) async {
+      final n = await _meshSvc.fetchNodeModels();
+      if (!mounted) return;
+      setState(() => _nodeModels = n);
+      if (n.any((m) => m.node == 'aws' && m.name == 'wakebox32b')) {
+        _wakePoll?.cancel();
+        setState(() => _wakeWarming = false);
+      }
+    });
+  }
+
+  Widget _wakeboxAsleepRow(BuildContext context, ModelController ctrl) {
+    return _remoteRow(
+      context,
+      ctrl,
+      source: const {
+        'kind': 'mesh',
+        'id': 'node:aws:wakebox32b',
+        'label': 'wakebox32b',
+        'model': 'wakebox32b',
+      },
+      title: 'wakebox32b',
+      sub: 'AWS node · asleep',
+      badge: _wakeWarming ? 'WAKING' : 'ASLEEP',
+      badgeColor: AppColors.orange,
+      icon: Icons.cloud_outlined,
+      trailing: _boxPill(
+        context,
+        _wakeWarming ? 'Warming…' : 'Warm',
+        AppColors.accentHi,
+        _wakeWarming
+            ? null
+            : () async {
+                TapFx.select();
+                setState(() => _wakeWarming = true);
+                final ok = await _meshSvc.wakeBox();
+                if (!mounted) return;
+                if (ok) {
+                  _startWakePoll();
+                } else {
+                  setState(() => _wakeWarming = false);
+                }
+              },
       ),
     );
   }
@@ -497,7 +622,14 @@ class _ModelLibraryBodyState extends State<_ModelLibraryBody> {
           ),
         ];
       }
-      return const [];
+      // Catalog is empty but the gateway has answered before: the
+      // wake box row still belongs here (asleep is its home state).
+      return [
+        _sectionTitle(context, 'Mesh - Astro OS lanes via your PC'),
+        const SizedBox(height: 12),
+        _wakeboxAsleepRow(context, ctrl),
+        const SizedBox(height: 16),
+      ];
     }
     final widgets = <Widget>[
       _sectionTitle(context, 'Mesh - Astro OS lanes via your PC'),
@@ -510,22 +642,47 @@ class _ModelLibraryBodyState extends State<_ModelLibraryBody> {
       ),
       const SizedBox(height: 12),
     ];
-    for (final nm in _nodeModels) {
-      widgets.add(_remoteRow(
-        context,
-        ctrl,
-        source: {
-          'kind': 'mesh',
-          'id': 'node:${nm.node}:${nm.name}',
-          'label': nm.name,
-          'model': nm.name,
-        },
-        title: nm.name,
-        sub: 'On your ${nm.node} node',
-        badge: 'NODE',
-        badgeColor: AppColors.accent,
-        icon: Icons.computer_outlined,
-      ));
+    var sawWakebox = false;
+    for (final nm in MeshService.favoritesFirst(
+      _nodeModels,
+      (n) => n.favorite,
+    )) {
+      final isWakebox = nm.node == 'aws' && nm.name == 'wakebox32b';
+      if (isWakebox) sawWakebox = true;
+      widgets.add(
+        _remoteRow(
+          context,
+          ctrl,
+          source: {
+            'kind': 'mesh',
+            'id': 'node:${nm.node}:${nm.name}',
+            'label': nm.name,
+            'model': nm.name,
+          },
+          title: nm.name,
+          sub: 'On your ${nm.node} node',
+          badge: 'NODE',
+          badgeColor: AppColors.accent,
+          icon: Icons.computer_outlined,
+          trailing: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (isWakebox)
+                _boxPill(context, 'Stop', AppColors.red, () async {
+                  TapFx.select();
+                  final ok = await _meshSvc.sleepBox();
+                  if (!mounted || !ok) return;
+                  final n = await _meshSvc.fetchNodeModels();
+                  if (mounted) setState(() => _nodeModels = n);
+                }),
+              _star(context, nm.name, nm.favorite),
+            ],
+          ),
+        ),
+      );
+    }
+    if (!sawWakebox) {
+      widgets.add(_wakeboxAsleepRow(context, ctrl));
     }
     const groupOrder = ['paid', 'trial', 'free', 'local', 'compute'];
     final byGroup = <String, List<MeshSeat>>{};
@@ -535,60 +692,66 @@ class _ModelLibraryBodyState extends State<_ModelLibraryBody> {
     for (final g in groupOrder) {
       final seats = byGroup[g];
       if (seats == null || seats.isEmpty) continue;
-      widgets.add(Padding(
-        padding: const EdgeInsets.only(top: 10, bottom: 6),
-        child: Text(
-          g.toUpperCase(),
-          style: TextStyle(
+      widgets.add(
+        Padding(
+          padding: const EdgeInsets.only(top: 10, bottom: 6),
+          child: Text(
+            g.toUpperCase(),
+            style: TextStyle(
               fontSize: 11,
               fontWeight: FontWeight.w600,
               color: context.textD,
-              letterSpacing: 0.6),
+              letterSpacing: 0.6,
+            ),
+          ),
         ),
-      ));
-      for (final s in seats) {
-        widgets.add(_remoteRow(
-          context,
-          ctrl,
-          source: {
-            'kind': 'mesh',
-            'id': 'mesh:${s.lane}:${s.model}',
-            'label': s.model,
-            'model': s.model,
-          },
-          title: s.model,
-          sub: s.isBlocked && s.blocked != null
-              ? '${s.lane} - ${s.blocked}'
-              : s.lane,
-          badge: s.isBlocked
-              ? 'BLOCKED'
-              : s.isVerified
-                  ? (s.proven ? 'PROVEN' : 'VERIFIED')
-                  : 'SMOKE TEST',
-          badgeColor: s.isBlocked
-              ? AppColors.red
-              : s.isVerified
-                  ? AppColors.green
-                  : AppColors.orange,
-          icon: Icons.hub_outlined,
-          dimmed: s.isBlocked,
-          tapOverride: s.isBlocked
-              ? () {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      backgroundColor: context.bgPanel,
-                      content: Text(
-                        s.blocked ?? 'Unavailable on this gateway',
-                        style: TextStyle(color: context.text),
+      );
+      for (final s in MeshService.favoritesFirst(seats, (s) => s.favorite)) {
+        widgets.add(
+          _remoteRow(
+            context,
+            ctrl,
+            source: {
+              'kind': 'mesh',
+              'id': 'mesh:${s.lane}:${s.model}',
+              'label': s.model,
+              'model': s.model,
+            },
+            trailing: _star(context, s.model, s.favorite),
+            title: s.model,
+            sub: s.isBlocked && s.blocked != null
+                ? '${s.lane} - ${s.blocked}'
+                : s.lane,
+            badge: s.isBlocked
+                ? 'BLOCKED'
+                : s.isVerified
+                ? (s.proven ? 'PROVEN' : 'VERIFIED')
+                : 'SMOKE TEST',
+            badgeColor: s.isBlocked
+                ? AppColors.red
+                : s.isVerified
+                ? AppColors.green
+                : AppColors.orange,
+            icon: Icons.hub_outlined,
+            dimmed: s.isBlocked,
+            tapOverride: s.isBlocked
+                ? () {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        backgroundColor: context.bgPanel,
+                        content: Text(
+                          s.blocked ?? 'Unavailable on this gateway',
+                          style: TextStyle(color: context.text),
+                        ),
                       ),
-                    ),
-                  );
-                }
-              : null,
-          onLongPress: s.isBlocked || s.proven
-              ? null
-              : () => _seatVerifySheet(context, s),
-        ));
+                    );
+                  }
+                : null,
+            onLongPress: s.isBlocked || s.proven
+                ? null
+                : () => _seatVerifySheet(context, s),
+          ),
+        );
       }
     }
     widgets.add(const SizedBox(height: 16));
@@ -634,8 +797,8 @@ class _ModelLibraryBodyState extends State<_ModelLibraryBody> {
                     content: Text(
                       ok
                           ? (target
-                              ? '${s.model} marked verified'
-                              : '${s.model} unmarked')
+                                ? '${s.model} marked verified'
+                                : '${s.model} unmarked')
                           : 'The mesh did not accept the flip - is the PC gateway up?',
                       style: TextStyle(color: context.text),
                     ),
@@ -668,21 +831,24 @@ class _ModelLibraryBodyState extends State<_ModelLibraryBody> {
       const SizedBox(height: 12),
     ];
     for (final c in conns) {
-      widgets.add(_remoteRow(
-        context,
-        ctrl,
-        source: {
-          'kind': 'custom',
-          'id': c.id,
-          'label': c.name,
-          'model': c.model,
-        },
-        title: c.name,
-        sub: '${c.model} - ${c.type == 'ollama' ? 'Ollama API' : 'OpenAI API'}',
-        badge: 'CUSTOM',
-        badgeColor: AppColors.accent,
-        icon: Icons.link_outlined,
-      ));
+      widgets.add(
+        _remoteRow(
+          context,
+          ctrl,
+          source: {
+            'kind': 'custom',
+            'id': c.id,
+            'label': c.name,
+            'model': c.model,
+          },
+          title: c.name,
+          sub:
+              '${c.model} - ${c.type == 'ollama' ? 'Ollama API' : 'OpenAI API'}',
+          badge: 'CUSTOM',
+          badgeColor: AppColors.accent,
+          icon: Icons.link_outlined,
+        ),
+      );
     }
     widgets.add(const SizedBox(height: 16));
     return widgets;
@@ -830,8 +996,8 @@ class _ModelLibraryBodyState extends State<_ModelLibraryBody> {
   ) {
     final keepNote = model.isCustom
         ? (model.hasRemoteUrl
-            ? '\n\nIt stays in your library — you can redownload it anytime.'
-            : '\n\nIt stays in your library, but without a download link it cannot be redownloaded.')
+              ? '\n\nIt stays in your library — you can redownload it anytime.'
+              : '\n\nIt stays in your library, but without a download link it cannot be redownloaded.')
         : '';
     Get.dialog(
       AlertDialog(
@@ -911,8 +1077,9 @@ class _ModelLibraryBodyState extends State<_ModelLibraryBody> {
     ModelController ctrl,
     AiModelInfo model,
   ) {
-    final urlCtrl =
-        TextEditingController(text: model.hasRemoteUrl ? model.url : '');
+    final urlCtrl = TextEditingController(
+      text: model.hasRemoteUrl ? model.url : '',
+    );
 
     Get.dialog(
       AlertDialog(

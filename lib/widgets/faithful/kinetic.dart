@@ -35,7 +35,8 @@ class KineticGrid extends StatefulWidget {
   State<KineticGrid> createState() => _KineticGridState();
 }
 
-class _KineticGridState extends State<KineticGrid> with SingleTickerProviderStateMixin {
+class _KineticGridState extends State<KineticGrid>
+    with SingleTickerProviderStateMixin {
   late final Ticker _ticker;
   final _tick = ValueNotifier<double>(0);
   double _t = 0;
@@ -51,6 +52,8 @@ class _KineticGridState extends State<KineticGrid> with SingleTickerProviderStat
   }
 
   void _onTick(Duration e) {
+    // Audit #3 (app-wide Reduce Motion): the grid holds a still frame.
+    if (mounted && MediaQuery.disableAnimationsOf(context)) return;
     final now = e.inMicroseconds / 1e6;
     final dt = now - _last;
     _last = now;
@@ -75,10 +78,12 @@ class _KineticGridState extends State<KineticGrid> with SingleTickerProviderStat
   Widget build(BuildContext context) {
     return GestureDetector(
       behavior: HitTestBehavior.translucent,
-      onPanStart:
-          widget.subtle ? null : (d) => _pointerTarget = d.localPosition,
-      onPanUpdate:
-          widget.subtle ? null : (d) => _pointerTarget = d.localPosition,
+      onPanStart: widget.subtle
+          ? null
+          : (d) => _pointerTarget = d.localPosition,
+      onPanUpdate: widget.subtle
+          ? null
+          : (d) => _pointerTarget = d.localPosition,
       onTapDown: widget.subtle
           ? null
           : (d) => _ripples.add(_Ripple(d.localPosition, _t)),
@@ -117,11 +122,13 @@ class _KineticPainter extends CustomPainter {
     final now = t();
     final ptr = pointer();
     final rips = ripples()
-        .map((r) => (
-              c: r.center,
-              radius: (now - r.born) * 400,
-              opacity: math.max(0.0, 1 - (now - r.born) * 1.2),
-            ))
+        .map(
+          (r) => (
+            c: r.center,
+            radius: (now - r.born) * 400,
+            opacity: math.max(0.0, 1 - (now - r.born) * 1.2),
+          ),
+        )
         .toList();
 
     final bg = Paint()..color = AppColors.darkBg; // void #050506
@@ -141,7 +148,9 @@ class _KineticPainter extends CustomPainter {
     final stepY = size.height / (rows - 1);
 
     final pts = List.generate(
-        rows, (_) => List<Offset>.filled(cols, Offset.zero));
+      rows,
+      (_) => List<Offset>.filled(cols, Offset.zero),
+    );
     final prox = List.generate(rows, (_) => List<double>.filled(cols, 0));
 
     for (var row = 0; row < rows; row++) {
@@ -169,22 +178,29 @@ class _KineticPainter extends CustomPainter {
         prox[row][col] = z;
         if (distP < _warpRadius && distP > 0 && edge > 0) {
           final pl = distP / _warpRadius;
-          final s = (pl < 0.01
+          final s =
+              (pl < 0.01
                   ? 0.0
                   : (1 - pl) * (1 - pl) * math.min(1.0, distP / 60)) *
               _warpDepth *
               edge;
           final ang = math.atan2(dy, dx);
-          pts[row][col] =
-              Offset(fx - math.cos(ang) * s + cx, fy - math.sin(ang) * s + cy);
+          pts[row][col] = Offset(
+            fx - math.cos(ang) * s + cx,
+            fy - math.sin(ang) * s + cy,
+          );
         } else {
           pts[row][col] = Offset(fx + cx, fy + cy);
         }
       }
     }
 
-    final baseLine = subtle ? const Color(0x0FFFFFFF) : const Color(0x21FFFFFF); // white a .13 (.06 subtle)
-    final baseNode = subtle ? const Color(0x14FFFFFF) : const Color(0x33FFFFFF); // white a .2 (.08 subtle)
+    final baseLine = subtle
+        ? const Color(0x0FFFFFFF)
+        : const Color(0x21FFFFFF); // white a .13 (.06 subtle)
+    final baseNode = subtle
+        ? const Color(0x14FFFFFF)
+        : const Color(0x33FFFFFF); // white a .2 (.08 subtle)
     const activeLine = Color(0xE69333EA); // purple a .9
     const activeNode = Color(0xFF9333EA);
 
@@ -199,12 +215,22 @@ class _KineticPainter extends CustomPainter {
 
     for (var row = 0; row < rows; row++) {
       for (var col = 0; col < cols - 1; col++) {
-        seg(pts[row][col], pts[row][col + 1], prox[row][col], prox[row][col + 1]);
+        seg(
+          pts[row][col],
+          pts[row][col + 1],
+          prox[row][col],
+          prox[row][col + 1],
+        );
       }
     }
     for (var col = 0; col < cols; col++) {
       for (var row = 0; row < rows - 1; row++) {
-        seg(pts[row][col], pts[row + 1][col], prox[row][col], prox[row + 1][col]);
+        seg(
+          pts[row][col],
+          pts[row + 1][col],
+          prox[row][col],
+          prox[row + 1][col],
+        );
       }
     }
 
@@ -223,8 +249,7 @@ class _KineticPainter extends CustomPainter {
                 const Color(0xFF9333EA).withValues(alpha: ul * 0.3),
                 const Color(0xFF9333EA).withValues(alpha: 0),
               ],
-            ).createShader(
-                Rect.fromCircle(center: p, radius: gr));
+            ).createShader(Rect.fromCircle(center: p, radius: gr));
           canvas.drawCircle(p, gr, glow);
         }
         nodePaint.color = _lerpC(baseNode, activeNode, ul);
@@ -236,8 +261,9 @@ class _KineticPainter extends CustomPainter {
       ..style = PaintingStyle.stroke
       ..strokeWidth = 1.5;
     for (final rp in rips) {
-      ripplePaint.color =
-          const Color(0xFFA855F7).withValues(alpha: rp.opacity * 0.28);
+      ripplePaint.color = const Color(
+        0xFFA855F7,
+      ).withValues(alpha: rp.opacity * 0.28);
       canvas.drawCircle(rp.c, math.max(0.0, rp.radius), ripplePaint);
     }
   }

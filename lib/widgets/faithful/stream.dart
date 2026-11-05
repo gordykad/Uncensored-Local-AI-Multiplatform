@@ -108,7 +108,9 @@ class _GlitchInState extends State<_GlitchIn>
 
   // The source's 6-key pose interpolation (per-segment easeOut).
   (double, double, double) _pose(
-      List<(double, double, double)> keys, double v) {
+    List<(double, double, double)> keys,
+    double v,
+  ) {
     final t = v * (keys.length - 1);
     final idx = t.floor().clamp(0, keys.length - 2);
     final frac = Curves.easeOut.transform(t - idx);
@@ -123,6 +125,11 @@ class _GlitchInState extends State<_GlitchIn>
 
   @override
   Widget build(BuildContext context) {
+    // Audit #3 (app-wide Reduce Motion): the glitch entrance is a
+    // plain word when the system asks for stillness.
+    if (MediaQuery.disableAnimationsOf(context)) {
+      return Text(widget.word, style: widget.style);
+    }
     return AnimatedBuilder(
       animation: _c,
       builder: (_, __) {
@@ -156,7 +163,10 @@ class _GlitchInState extends State<_GlitchIn>
           (0, 0, 0),
         ];
         Widget layer(
-            Color color, List<(double, double, double)> keys, double glow) {
+          Color color,
+          List<(double, double, double)> keys,
+          double glow,
+        ) {
           final (dx, dy, sk) = _pose(keys, v);
           return Transform(
             transform: Matrix4.identity()

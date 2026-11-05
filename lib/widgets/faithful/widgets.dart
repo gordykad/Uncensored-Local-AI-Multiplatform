@@ -55,8 +55,7 @@ class _TextShimmerWaveState extends State<TextShimmerWave>
   @override
   void initState() {
     super.initState();
-    final cycle = widget.duration +
-        widget.text.length * 0.05 / widget.spread;
+    final cycle = widget.duration + widget.text.length * 0.05 / widget.spread;
     _c = AnimationController(
       vsync: this,
       duration: Duration(milliseconds: (cycle * 1000).round()),
@@ -71,6 +70,10 @@ class _TextShimmerWaveState extends State<TextShimmerWave>
 
   @override
   Widget build(BuildContext context) {
+    // Audit #3 (app-wide Reduce Motion): shimmer becomes plain text.
+    if (MediaQuery.disableAnimationsOf(context)) {
+      return Text(widget.text, style: widget.style);
+    }
     final n = widget.text.length;
     final base = const Color(0xFF71717A);
     final hi = const Color(0xFFFFFFFF);
@@ -91,18 +94,22 @@ class _TextShimmerWaveState extends State<TextShimmerWave>
     );
   }
 
-  Widget _shimmerChar(String ch, int i, int n, double cycleT,
-      double activeFrac, Color base, Color hi) {
+  Widget _shimmerChar(
+    String ch,
+    int i,
+    int n,
+    double cycleT,
+    double activeFrac,
+    Color base,
+    Color hi,
+  ) {
     final delay = i * widget.duration * (1 / widget.spread) / n;
     final total = widget.duration + n * 0.05 / widget.spread;
-    final local =
-        ((cycleT * total - delay) / widget.duration).clamp(0.0, 1.0);
+    final local = ((cycleT * total - delay) / widget.duration).clamp(0.0, 1.0);
     final e = Curves.easeInOut.transform(local);
     // keyframe envelope: 0 -> 1 -> 0 across the duration
     final env = math.sin(e * math.pi);
-    final style = widget.style.copyWith(
-      color: Color.lerp(base, hi, env),
-    );
+    final style = widget.style.copyWith(color: Color.lerp(base, hi, env));
     final m = Matrix4.identity()
       ..setEntry(3, 2, 1 / 500)
       ..rotateY(10 * math.pi / 180 * env);
@@ -195,8 +202,7 @@ class _AiLoaderState extends State<AiLoader> with TickerProviderStateMixin {
           AnimatedBuilder(
             animation: _ring,
             builder: (_, __) {
-              final ang =
-                  (90 + 360 * _ring.value) * math.pi / 180;
+              final ang = (90 + 360 * _ring.value) * math.pi / 180;
               return Transform.rotate(
                 angle: ang,
                 child: CustomPaint(

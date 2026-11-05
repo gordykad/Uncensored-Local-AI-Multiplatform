@@ -8,6 +8,9 @@ import '../controllers/theme_controller.dart';
 import '../services/llm_service.dart';
 import '../services/image_gen_service.dart';
 import '../services/mesh_service.dart';
+import '../services/haptics.dart';
+import '../services/phone_node.dart';
+import '../theme/type_scale.dart';
 import '../services/custom_connections_service.dart';
 import '../services/admin_activity_service.dart';
 import '../services/log_service.dart';
@@ -56,6 +59,8 @@ class _HomeScreenState extends State<HomeScreen> {
   final GlobalKey<ScaffoldState> _mobileScaffoldKey =
       GlobalKey<ScaffoldState>();
 
+  bool _wasGenerating = false;
+
   @override
   void initState() {
     super.initState();
@@ -63,6 +68,24 @@ class _HomeScreenState extends State<HomeScreen> {
       if (mounted) setState(() {});
     });
     _scrollController.addListener(_handleChatScroll);
+    // Audit #1: a run ending gets its haptic — soft when it landed,
+    // heavy when it errored. Causal only, like the rest of the map.
+    _chatCtrl.isGenerating.listen((gen) {
+      if (_wasGenerating && !gen) {
+        final msgs = _chatCtrl.activeChat?.messages;
+        final last = msgs == null || msgs.isEmpty ? null : msgs.last;
+        if (last != null && !last.isUser && last.content.startsWith('⚠')) {
+          TapFx.error();
+        } else {
+          TapFx.done();
+        }
+      }
+      _wasGenerating = gen;
+    });
+    // T-05: re-arm phone-node presence across relaunches.
+    if (MeshService().phoneNodeOn && ImageGenService().connectivityOn) {
+      setPhoneNode(true).catchError((_) => false);
+    }
   }
 
   @override
@@ -103,7 +126,8 @@ class _HomeScreenState extends State<HomeScreen> {
   /// a loaded local model or a selected mesh seat - and the composer
   /// holds text. Anything else renders the button dim and inert.
   bool get _canSend {
-    final remoteOn = _modelCtrl.selectedRemote.value != null &&
+    final remoteOn =
+        _modelCtrl.selectedRemote.value != null &&
         ImageGenService().connectivityOn;
     return (_llm.isLoaded.value || remoteOn) &&
         _msgController.text.trim().isNotEmpty;
@@ -112,6 +136,7 @@ class _HomeScreenState extends State<HomeScreen> {
   void _send() {
     final text = _msgController.text.trim();
     if (text.isEmpty) return;
+    TapFx.send();
 
     if (_chatCtrl.activeChat == null) {
       _chatCtrl.newChat();
@@ -143,12 +168,16 @@ class _HomeScreenState extends State<HomeScreen> {
         if (matches.isEmpty) {
           _modelCtrl.clearRemote();
         } else {
-          stream = CustomConnectionsService()
-              .streamChat(conn: matches.first, messages: msgs);
+          stream = CustomConnectionsService().streamChat(
+            conn: matches.first,
+            messages: msgs,
+          );
         }
       } else {
-        stream = MeshService()
-            .streamChat(model: remote['model'] as String, messages: msgs);
+        stream = MeshService().streamChat(
+          model: remote['model'] as String,
+          messages: msgs,
+        );
       }
       if (stream != null) {
         _chatCtrl.runRemoteTurn(
@@ -175,8 +204,9 @@ class _HomeScreenState extends State<HomeScreen> {
       _loggedBuild = true;
       try {
         Get.find<LogService>().info(
-            'Home build: w=${MediaQuery.of(context).size.width} h=${MediaQuery.of(context).size.height} desktop=$isDesktop',
-            source: 'UI');
+          'Home build: w=${MediaQuery.of(context).size.width} h=${MediaQuery.of(context).size.height} desktop=$isDesktop',
+          source: 'UI',
+        );
       } catch (_) {}
     }
 
@@ -248,7 +278,9 @@ class _HomeScreenState extends State<HomeScreen> {
                           width: 80,
                           height: 80,
                           child: CircularProgressIndicator(
-                            value: progress <= 0 ? null : progress.clamp(0.0, 1.0),
+                            value: progress <= 0
+                                ? null
+                                : progress.clamp(0.0, 1.0),
                             strokeWidth: 5,
                             backgroundColor: context.border,
                             valueColor: const AlwaysStoppedAnimation(
@@ -293,13 +325,10 @@ class _HomeScreenState extends State<HomeScreen> {
                   // Status message — #14 scramble-resolves on change
                   ScrambleText(
                     text: msg.isNotEmpty ? msg : 'Importing file...',
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: context.textM,
-                    ),
+                    style: TextStyle(fontSize: 12, color: context.textM),
                   ),
                   const SizedBox(height: 12),
-                  
+
                   // Hint for large models
                   if (progress == 0)
                     Text(
@@ -450,16 +479,19 @@ class _HomeScreenState extends State<HomeScreen> {
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
                 DockNav(
-              selectedIndex: _mobileTabIndex,
-              onSelect: (i) {
-                // Keyboard fix: switching tabs always drops the keyboard.
-                FocusManager.instance.primaryFocus?.unfocus();
-                try {
-                  Get.find<LogService>()
-                      .info('Tab selected: $i', source: 'UI');
-                } catch (_) {}
-                setState(() => _mobileTabIndex = i);
-              },
+                  selectedIndex: _mobileTabIndex,
+                  onSelect: (i) {
+                    TapFx.select();
+                    // Keyboard fix: switching tabs always drops the keyboard.
+                    FocusManager.instance.primaryFocus?.unfocus();
+                    try {
+                      Get.find<LogService>().info(
+                        'Tab selected: $i',
+                        source: 'UI',
+                      );
+                    } catch (_) {}
+                    setState(() => _mobileTabIndex = i);
+                  },
                 ),
               ],
             ),
@@ -473,10 +505,7 @@ class _HomeScreenState extends State<HomeScreen> {
     return Column(
       children: [
         // Mobile top bar — minimal with SafeArea for status bar
-        SafeArea(
-          bottom: false,
-          child: _buildMobileTopBar(),
-        ),
+        SafeArea(bottom: false, child: _buildMobileTopBar()),
         // Model loading progress banner
         Obx(() {
           if (!_modelCtrl.isLoadingModel.value) return const SizedBox.shrink();
@@ -488,7 +517,9 @@ class _HomeScreenState extends State<HomeScreen> {
             decoration: BoxDecoration(
               color: AppColors.orange.withValues(alpha: 0.1),
               border: Border(
-                bottom: BorderSide(color: AppColors.orange.withValues(alpha: 0.3)),
+                bottom: BorderSide(
+                  color: AppColors.orange.withValues(alpha: 0.3),
+                ),
               ),
             ),
             child: Column(
@@ -506,7 +537,10 @@ class _HomeScreenState extends State<HomeScreen> {
                       ),
                     ),
                     Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 3,
+                      ),
                       decoration: BoxDecoration(
                         color: AppColors.orange.withValues(alpha: 0.15),
                         borderRadius: BorderRadius.circular(6),
@@ -552,6 +586,7 @@ class _HomeScreenState extends State<HomeScreen> {
         padding: const EdgeInsets.only(right: 4),
         child: InkWell(
           onTap: () {
+            TapFx.stop();
             setState(() => _stopCount++);
             _chatCtrl.stopGeneration();
           },
@@ -631,20 +666,31 @@ class _HomeScreenState extends State<HomeScreen> {
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      // Status dot
-                      Container(
-                        width: 7,
-                        height: 7,
-                        margin: const EdgeInsets.only(right: 6),
-                        decoration: BoxDecoration(
-                          shape: BoxShape.circle,
-                          color: isLoading
-                              ? AppColors.orange
-                              : remoteOn
-                              ? AppColors.accent
-                              : loaded
-                              ? AppColors.green
-                              : AppColors.accent,
+                      // Status dot — audit #8: never color-alone;
+                      // it carries a semantics label and the source
+                      // caption beside the model name says it in text.
+                      Semantics(
+                        label: isLoading
+                            ? 'Loading model'
+                            : remoteOn
+                            ? 'Answering from the mesh'
+                            : loaded
+                            ? 'On-device model ready'
+                            : 'No model selected',
+                        child: Container(
+                          width: 7,
+                          height: 7,
+                          margin: const EdgeInsets.only(right: 6),
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: isLoading
+                                ? AppColors.orange
+                                : remoteOn
+                                ? AppColors.accent
+                                : loaded
+                                ? AppColors.green
+                                : AppColors.accent,
+                          ),
                         ),
                       ),
                       Flexible(
@@ -670,6 +716,20 @@ class _HomeScreenState extends State<HomeScreen> {
                           ),
                         ),
                       ),
+                      if (remoteOn || loaded) ...[
+                        const SizedBox(width: 6),
+                        Text(
+                          remoteOn
+                              ? (remote['kind'] == 'custom'
+                                    ? '· phone-direct'
+                                    : '· Mesh')
+                              : '· On device',
+                          style: TextStyle(
+                            fontSize: TS.of(context, 10),
+                            color: context.textD,
+                          ),
+                        ),
+                      ],
                       const SizedBox(width: 4),
                       Icon(
                         Icons.keyboard_arrow_down_rounded,
@@ -712,9 +772,21 @@ class _HomeScreenState extends State<HomeScreen> {
       String source,
       String name,
       String meta,
-      VoidCallback act,
-    ) {
-      entries.add(PickerEntry(source, name, meta));
+      VoidCallback act, {
+      bool favorite = false,
+      String? starModel,
+      Widget? trailing,
+    }) {
+      entries.add(
+        PickerEntry(
+          source,
+          name,
+          meta,
+          favorite: favorite,
+          starModel: starModel,
+          trailing: trailing,
+        ),
+      );
       actions['$source|$name'] = act;
     }
 
@@ -724,7 +796,11 @@ class _HomeScreenState extends State<HomeScreen> {
       final meta = info == null
           ? filename
           : '${info.sizeGb} GB \u00b7 Min ${info.minRamGb} GB RAM \u00b7 '
-              '${info.minRamGb > 6 ? 'TOO BIG' : info.sizeGb > 4 ? 'STREAMS' : 'FITS'}';
+                '${info.minRamGb > 6
+                    ? 'TOO BIG'
+                    : info.sizeGb > 4
+                    ? 'STREAMS'
+                    : 'FITS'}';
       addEntry('On device', name, meta, () {
         if (_modelCtrl.selectedModelFilename.value != filename) {
           _modelCtrl.loadModel(filename);
@@ -739,17 +815,66 @@ class _HomeScreenState extends State<HomeScreen> {
     if (mesh.connectivityOn) {
       mesh.fetchSeats();
       mesh.fetchNodeModels();
-      for (final nm in mesh.cachedNodeModels()) {
-        addEntry('Mesh', nm.name, 'On your ${nm.node} node', () {
-          _modelCtrl.selectRemote({
-            'kind': 'mesh',
-            'id': 'node:${nm.node}:${nm.name}',
-            'label': nm.name,
-            'model': nm.name,
-          });
-        });
+      // Sync build (mesh 0.20): favorites pin to the top of the list.
+      var sawWakebox = false;
+      for (final nm in MeshService.favoritesFirst(
+        mesh.cachedNodeModels(),
+        (n) => n.favorite,
+      )) {
+        final isWakebox = nm.node == 'aws' && nm.name == 'wakebox32b';
+        if (isWakebox) sawWakebox = true;
+        addEntry(
+          'Mesh',
+          nm.name,
+          'On your ${nm.node} node',
+          () {
+            _modelCtrl.selectRemote({
+              'kind': 'mesh',
+              'id': 'node:${nm.node}:${nm.name}',
+              'label': nm.name,
+              'model': nm.name,
+            });
+          },
+          favorite: nm.favorite,
+          starModel: nm.name,
+          trailing: isWakebox
+              ? _BoxPill(
+                  label: 'Stop',
+                  color: AppColors.red,
+                  doneLabel: 'Sleeping',
+                  onFire: () => mesh.sleepBox(),
+                )
+              : null,
+        );
       }
-      for (final s in mesh.cachedSeats()) {
+      if (!sawWakebox) {
+        // The box sleeps: its node is out of the catalog, so the
+        // row is synthetic — Warm pre-warms it, picking it lets the
+        // gateway auto-wake on the first chat.
+        addEntry(
+          'Mesh',
+          'wakebox32b',
+          'AWS node · asleep',
+          () {
+            _modelCtrl.selectRemote({
+              'kind': 'mesh',
+              'id': 'node:aws:wakebox32b',
+              'label': 'wakebox32b',
+              'model': 'wakebox32b',
+            });
+          },
+          trailing: _BoxPill(
+            label: 'Warm',
+            color: AppColors.accentHi,
+            doneLabel: 'Warming…',
+            onFire: () => mesh.wakeBox(),
+          ),
+        );
+      }
+      for (final s in MeshService.favoritesFirst(
+        mesh.cachedSeats(),
+        (s) => s.favorite,
+      )) {
         addEntry(
           'Mesh',
           s.model,
@@ -760,8 +885,7 @@ class _HomeScreenState extends State<HomeScreen> {
             if (s.isBlocked) {
               ScaffoldMessenger.of(context).showSnackBar(
                 SnackBar(
-                  content:
-                      Text(s.blocked ?? 'Unavailable on this gateway'),
+                  content: Text(s.blocked ?? 'Unavailable on this gateway'),
                 ),
               );
               return;
@@ -773,22 +897,19 @@ class _HomeScreenState extends State<HomeScreen> {
               'model': s.model,
             });
           },
+          favorite: s.favorite,
+          starModel: s.model,
         );
       }
       for (final c in CustomConnectionsService().list()) {
-        addEntry(
-          'Custom',
-          c.name,
-          '${c.model} \u00b7 phone-direct',
-          () {
-            _modelCtrl.selectRemote({
-              'kind': 'custom',
-              'id': c.id,
-              'label': c.name,
-              'model': c.model,
-            });
-          },
-        );
+        addEntry('Custom', c.name, '${c.model} \u00b7 phone-direct', () {
+          _modelCtrl.selectRemote({
+            'kind': 'custom',
+            'id': c.id,
+            'label': c.name,
+            'model': c.model,
+          });
+        });
       }
     }
 
@@ -816,6 +937,12 @@ class _HomeScreenState extends State<HomeScreen> {
           onPick: (entry) {
             Navigator.pop(context);
             actions['${entry.source}|${entry.name}']?.call();
+          },
+          onToggleStar: (entry, v) {
+            TapFx.select();
+            if (entry.starModel != null) {
+              MeshService().setModelFavorite(entry.starModel!, v);
+            }
           },
         ),
       ),
@@ -1010,8 +1137,10 @@ class _HomeScreenState extends State<HomeScreen> {
                         decimals: 1,
                         style: TextStyle(fontSize: 12, color: context.textM),
                       ),
-                      Text(' t/s',
-                          style: TextStyle(fontSize: 12, color: context.textM)),
+                      Text(
+                        ' t/s',
+                        style: TextStyle(fontSize: 12, color: context.textM),
+                      ),
                     ],
                   ),
                 ],
@@ -1072,48 +1201,48 @@ class _HomeScreenState extends State<HomeScreen> {
           );
         }),
         Column(
-      children: [
-        Expanded(
-          child: Obx(() {
-            final chat = _chatCtrl.activeChat;
-            if (chat == null || chat.messages.isEmpty) {
-              return _buildWelcome();
-            }
+          children: [
+            Expanded(
+              child: Obx(() {
+                final chat = _chatCtrl.activeChat;
+                if (chat == null || chat.messages.isEmpty) {
+                  return _buildWelcome();
+                }
 
-            if (_lastRenderedChatId != chat.id) {
-              _lastRenderedChatId = chat.id;
-              _autoScrollToBottom = true;
-              _scrollToBottom(force: true);
-            }
+                if (_lastRenderedChatId != chat.id) {
+                  _lastRenderedChatId = chat.id;
+                  _autoScrollToBottom = true;
+                  _scrollToBottom(force: true);
+                }
 
-            _scrollToBottom();
+                _scrollToBottom();
 
-            return ListView.builder(
-              controller: _scrollController,
-              padding: const EdgeInsets.symmetric(vertical: 16),
-              itemCount: chat.messages.length,
-              itemBuilder: (context, index) {
-                final msg = chat.messages[index];
-                // Show speed on the last AI message
-                final isLastAi =
-                    msg.isAssistant && index == chat.messages.length - 1;
-                return ChatBubble(
-                  message: msg,
-                  showSpeed: isLastAi,
-                  isStreaming: isLastAi && _chatCtrl.isGenerating.value,
-                  isRegenerating:
-                      isLastAi && _chatCtrl.isRegenerating.value,
-                  onRegenerate: isLastAi && !_chatCtrl.isGenerating.value
-                      ? () => _chatCtrl.regenerateLast()
-                      : null,
+                return ListView.builder(
+                  controller: _scrollController,
+                  padding: const EdgeInsets.symmetric(vertical: 16),
+                  itemCount: chat.messages.length,
+                  itemBuilder: (context, index) {
+                    final msg = chat.messages[index];
+                    // Show speed on the last AI message
+                    final isLastAi =
+                        msg.isAssistant && index == chat.messages.length - 1;
+                    return ChatBubble(
+                      message: msg,
+                      showSpeed: isLastAi,
+                      isStreaming: isLastAi && _chatCtrl.isGenerating.value,
+                      isRegenerating:
+                          isLastAi && _chatCtrl.isRegenerating.value,
+                      onRegenerate: isLastAi && !_chatCtrl.isGenerating.value
+                          ? () => _chatCtrl.regenerateLast()
+                          : null,
+                    );
+                  },
                 );
-              },
-            );
-          }),
-        ),
+              }),
+            ),
 
-        _buildInputArea(),
-      ],
+            _buildInputArea(),
+          ],
         ),
         // 1.13.0: MorphOrb composer (variant #5, Answer Card Mode,
         // exactly as the artifact) — the pill lives in this overlay
@@ -1149,41 +1278,40 @@ class _HomeScreenState extends State<HomeScreen> {
     // up into _buildChatArea (B3/C3) so it runs full-bleed behind the
     // composer too.
     return Center(
-          child: Padding(
-            padding: const EdgeInsets.all(32),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Obx(
-                  () => ThinkingOrb(
-                    size: 190,
-                    thinking: _chatCtrl.isGenerating.value,
-                  ),
-                ),
-                const SizedBox(height: 26),
-                BlurReveal(
-                  text: 'What are we running today?',
-                  style: TextStyle(
-                    fontSize: 22,
-                    fontWeight: FontWeight.w600,
-                    color: context.text,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                Obx(
-                  () => Text(
-                    _llm.isLoaded.value
-                        ? 'Type a message below to get started.'
-                        : 'Pick a model. Nothing leaves this phone.',
-                    style: TextStyle(fontSize: 14, color: context.textM),
-                    textAlign: TextAlign.center,
-                  ),
-                ),
-                const SizedBox(height: 22),
-                const RedactionBars(widths: [110, 76, 128, 58], barHeight: 9),
-              ],
+      child: Padding(
+        padding: const EdgeInsets.all(32),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Obx(
+              () => ThinkingOrb(
+                size: 190,
+                thinking: _chatCtrl.isGenerating.value,
+              ),
             ),
-          ),
+            const SizedBox(height: 26),
+            BlurReveal(
+              text: 'What are we running today?',
+              style: TS.display(context, color: context.text),
+            ),
+            const SizedBox(height: 8),
+            Obx(
+              () => Text(
+                _llm.isLoaded.value
+                    ? 'Type a message below to get started.'
+                    : 'Pick a model. Nothing leaves this phone.',
+                style: TextStyle(
+                  fontSize: TS.of(context, 14),
+                  color: context.textM,
+                ),
+                textAlign: TextAlign.center,
+              ),
+            ),
+            const SizedBox(height: 22),
+            const RedactionBars(widths: [110, 76, 128, 58], barHeight: 9),
+          ],
+        ),
+      ),
     );
   }
 
@@ -1209,9 +1337,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     child: Padding(
                       padding: const EdgeInsets.fromLTRB(2, 14, 8, 14),
                       child: Text(
-                        _msgController.text.isEmpty
-                            ? ' '
-                            : _msgController.text,
+                        _msgController.text.isEmpty ? ' ' : _msgController.text,
                         maxLines: 5,
                         style: const TextStyle(fontSize: 15, height: 1.4),
                       ),
@@ -1310,6 +1436,62 @@ class _AdminToastOverlay extends StatelessWidget {
           ],
         );
       }),
+    );
+  }
+}
+
+/// The wakebox32b row action (sync build): Warm pre-warms the AWS
+/// box, Stop sleeps it. One-shot — after firing it shows its done
+/// label and goes inert; the catalog state catches up on its own
+/// (the node appears/disappears with the box).
+class _BoxPill extends StatefulWidget {
+  final String label;
+  final String doneLabel;
+  final Color color;
+  final Future<bool> Function() onFire;
+  const _BoxPill({
+    required this.label,
+    required this.doneLabel,
+    required this.color,
+    required this.onFire,
+  });
+
+  @override
+  State<_BoxPill> createState() => _BoxPillState();
+}
+
+class _BoxPillState extends State<_BoxPill> {
+  bool _fired = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(right: 6),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(12),
+        onTap: _fired
+            ? null
+            : () async {
+                TapFx.select();
+                setState(() => _fired = true);
+                await widget.onFire();
+              },
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+          decoration: BoxDecoration(
+            border: Border.all(color: widget.color),
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Text(
+            _fired ? widget.doneLabel : widget.label,
+            style: TextStyle(
+              fontSize: 11,
+              fontWeight: FontWeight.w700,
+              color: widget.color,
+            ),
+          ),
+        ),
+      ),
     );
   }
 }

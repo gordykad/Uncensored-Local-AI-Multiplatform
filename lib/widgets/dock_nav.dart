@@ -3,11 +3,13 @@
 // WIDTH animates from pointer distance (siblings reflow, never transform
 // scale); tiles are the source's colored macOS-style squares with white
 // glyphs. Founder color ruling: full purple, light to dark left to right.
+import 'dart:math' as math;
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 
 import '../theme/app_colors.dart';
+import '../theme/type_scale.dart';
 
 class DockNav extends StatefulWidget {
   final int selectedIndex;
@@ -57,50 +59,50 @@ class _DockNavState extends State<DockNav> {
     // expanding widget takes the full screen height and starves the body
     // (the 1.9.0 dock-only bug). The host centers the pill horizontally.
     return Listener(
-        onPointerMove: (e) => setState(() => _pointerX = e.localPosition.dx),
-        onPointerDown: (e) => setState(() => _pointerX = e.localPosition.dx),
-        onPointerUp: (_) => setState(() => _pointerX = null),
-        onPointerCancel: (_) => setState(() => _pointerX = null),
-        // Audit #6 (approved 2026-11-05): the dock is a material too —
-        // same translucent fill, now with the blur behind it. The
-        // shadow lives OUTSIDE the clip so it survives.
-        child: Container(
-          decoration: const BoxDecoration(
-            borderRadius: BorderRadius.all(Radius.circular(26)),
-            boxShadow: [
-              BoxShadow(
-                color: Color(0x8C000000),
-                blurRadius: 38,
-                offset: Offset(0, 16),
-              ),
-            ],
-          ),
-          child: ClipRRect(
+      onPointerMove: (e) => setState(() => _pointerX = e.localPosition.dx),
+      onPointerDown: (e) => setState(() => _pointerX = e.localPosition.dx),
+      onPointerUp: (_) => setState(() => _pointerX = null),
+      onPointerCancel: (_) => setState(() => _pointerX = null),
+      // Audit #6 (approved 2026-11-05): the dock is a material too —
+      // same translucent fill, now with the blur behind it. The
+      // shadow lives OUTSIDE the clip so it survives.
+      child: Container(
+        decoration: const BoxDecoration(
+          borderRadius: BorderRadius.all(Radius.circular(26)),
+          boxShadow: [
+            BoxShadow(
+              color: Color(0x8C000000),
+              blurRadius: 38,
+              offset: Offset(0, 16),
+            ),
+          ],
+        ),
+        child: ClipRRect(
           borderRadius: BorderRadius.circular(26),
           child: BackdropFilter(
             filter: ui.ImageFilter.blur(sigmaX: 18, sigmaY: 18),
             child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-          decoration: BoxDecoration(
-            color: const Color(0xB818181C),
-            border: Border.all(color: AppColors.darkBorder),
-            borderRadius: BorderRadius.circular(26),
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: [
-              for (var i = 0; i < _tiles.length; i++) ...[
-                if (i > 0) const SizedBox(width: 14),
-                _cell(i),
-              ],
-            ],
-          ),
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+              decoration: BoxDecoration(
+                color: const Color(0xB818181C),
+                border: Border.all(color: AppColors.darkBorder),
+                borderRadius: BorderRadius.circular(26),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  for (var i = 0; i < _tiles.length; i++) ...[
+                    if (i > 0) const SizedBox(width: 14),
+                    _cell(i),
+                  ],
+                ],
+              ),
             ),
           ),
         ),
-        ),
-      );
+      ),
+    );
   }
 
   Widget _cell(int i) {
@@ -114,8 +116,12 @@ class _DockNavState extends State<DockNav> {
         mainAxisSize: MainAxisSize.min,
         children: [
           AnimatedContainer(
-            duration: const Duration(milliseconds: 180),
-            curve: Curves.easeOut,
+            // Audit #7: tile motion rides a damped spring; audit #3:
+            // Reduce Motion snaps instead.
+            duration: RM.off(context)
+                ? Duration.zero
+                : const Duration(milliseconds: 300),
+            curve: const _SpringCurve(),
             width: size,
             height: size,
             decoration: BoxDecoration(
@@ -137,20 +143,33 @@ class _DockNavState extends State<DockNav> {
             height: 4,
             decoration: BoxDecoration(
               shape: BoxShape.circle,
-              color: selected
-                  ? AppColors.darkTextM
-                  : Colors.transparent,
+              color: selected ? AppColors.darkTextM : Colors.transparent,
             ),
           ),
           Text(
             label,
             style: TextStyle(
-              fontSize: 9,
+              fontSize: TS.of(context, 9),
               color: selected ? AppColors.darkTextM : AppColors.darkTextD,
             ),
           ),
         ],
       ),
     );
+  }
+}
+
+/// Audit #7: a damped-spring curve (settle ~300ms, a breath of
+/// overshoot) for the dock's tile motion — the macOS dock feel the
+/// source component implies but never encoded.
+class _SpringCurve extends Curve {
+  const _SpringCurve();
+
+  @override
+  double transformInternal(double t) {
+    if (t <= 0) return 0;
+    if (t >= 1) return 1;
+    final v = 1 - math.exp(-7 * t) * (math.cos(9 * t) + 0.78 * math.sin(9 * t));
+    return v.clamp(-0.1, 1.12).toDouble();
   }
 }

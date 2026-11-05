@@ -17,6 +17,7 @@
 // picker renders instantly; a stale cache is badged as cached.
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:hive/hive.dart';
 import 'package:http/http.dart' as http;
@@ -35,6 +36,7 @@ class MeshSeat {
   final String? blocked; // reason, only when truly unservable
   final bool unverifiedFlag;
   final bool verifiedOverride; // Kai flipped it via /mesh/model-prefs
+  final bool favorite; // mesh 0.20: starred via /mesh/model-prefs
   const MeshSeat({
     required this.model,
     required this.lane,
@@ -44,6 +46,7 @@ class MeshSeat {
     this.blocked,
     this.unverifiedFlag = false,
     this.verifiedOverride = false,
+    this.favorite = false,
   });
 
   bool get proven => status == 'proven';
@@ -52,37 +55,57 @@ class MeshSeat {
   bool get unverified => !isVerified && (unverifiedFlag || !proven);
 
   factory MeshSeat.fromMap(Map m) => MeshSeat(
-        model: m['model']?.toString() ?? '',
-        lane: m['lane']?.toString() ?? '',
-        group: m['group']?.toString() ?? '',
-        status: m['status']?.toString() ?? 'unverified',
-        available: m['available'] != false,
-        blocked: m['blocked']?.toString(),
-        unverifiedFlag: m['unverified'] == true,
-        verifiedOverride: m['verified_override'] == true,
-      );
+    model: m['model']?.toString() ?? '',
+    lane: m['lane']?.toString() ?? '',
+    group: m['group']?.toString() ?? '',
+    status: m['status']?.toString() ?? 'unverified',
+    available: m['available'] != false,
+    blocked: m['blocked']?.toString(),
+    unverifiedFlag: m['unverified'] == true,
+    verifiedOverride: m['verified_override'] == true,
+    favorite: m['favorite'] == true,
+  );
 
   Map<String, dynamic> toMap() => {
-        'model': model,
-        'lane': lane,
-        'group': group,
-        'status': status,
-        'available': available,
-        if (blocked != null) 'blocked': blocked,
-        'unverified': unverifiedFlag,
-        'verified_override': verifiedOverride,
-      };
+    'model': model,
+    'lane': lane,
+    'group': group,
+    'status': status,
+    'available': available,
+    if (blocked != null) 'blocked': blocked,
+    'unverified': unverifiedFlag,
+    'verified_override': verifiedOverride,
+    'favorite': favorite,
+  };
+
+  MeshSeat copyWith({bool? favorite, bool? verifiedOverride}) => MeshSeat(
+    model: model,
+    lane: lane,
+    group: group,
+    status: status,
+    available: available,
+    blocked: blocked,
+    unverifiedFlag: unverifiedFlag,
+    verifiedOverride: verifiedOverride ?? this.verifiedOverride,
+    favorite: favorite ?? this.favorite,
+  );
 }
 
 class MeshNodeModel {
   final String name;
-  final String node; // 'pc' | 'vm' | ...
-  const MeshNodeModel({required this.name, required this.node});
+  final String node; // 'pc' | 'vm' | 'aws' | ...
+  final bool favorite; // mesh 0.20: starred via /mesh/model-prefs
+  const MeshNodeModel({
+    required this.name,
+    required this.node,
+    this.favorite = false,
+  });
 
   factory MeshNodeModel.fromMap(Map m) => MeshNodeModel(
-        name: m['name']?.toString() ?? '',
-        node: m['node']?.toString() ?? '',
-      );
+    name: m['name']?.toString() ?? '',
+    node: m['node']?.toString() ?? '',
+    favorite: m['favorite'] == true,
+  );
 }
 
 class MeshService {
@@ -123,7 +146,9 @@ class MeshService {
           .toList();
       await _box.put('catalog_models', list.map((s) => s.toMap()).toList());
       await _box.put(
-          'catalog_fetched_ms', DateTime.now().millisecondsSinceEpoch);
+        'catalog_fetched_ms',
+        DateTime.now().millisecondsSinceEpoch,
+      );
       return list;
     } catch (_) {
       return cachedSeats();
@@ -165,12 +190,19 @@ class MeshService {
       if (r.statusCode != 200) return cachedNodeModels();
       final d = jsonDecode(r.body) as Map<String, dynamic>;
       final list = (d['models'] as List? ?? [])
-          .map((m) => MeshNodeModel.fromMap(Map<String, dynamic>.from(m as Map)))
+          .map(
+            (m) => MeshNodeModel.fromMap(Map<String, dynamic>.from(m as Map)),
+          )
           .where((m) => m.name.isNotEmpty)
           .toList();
       await _box.put(
-          'catalog_nodes',
-          list.map((m) => {'name': m.name, 'node': m.node}).toList());
+        'catalog_nodes',
+        list
+            .map(
+              (m) => {'name': m.name, 'node': m.node, 'favorite': m.favorite},
+            )
+            .toList(),
+      );
       return list;
     } catch (_) {
       return cachedNodeModels();
@@ -215,12 +247,176 @@ class MeshService {
           unverifiedFlag: verified ? false : s.unverifiedFlag,
           verifiedOverride: verified,
         );
-        await _box.put(
-            'catalog_models', seats.map((s) => s.toMap()).toList());
+        await _box.put('catalog_models', seats.map((s) => s.toMap()).toList());
       }
       return true;
     } catch (_) {
       return false;
+    }
+  }
+
+  /// Star/unstar a model on the serving gateway (mesh 0.20:
+  /// POST /mesh/model-prefs {model, favorite}). Prefs are
+  /// per-gateway; the write goes to the same gateway the catalog
+  /// came from. Cached seat + node entries update in place.
+  Future<bool> setModelFavorite(String model, bool favorite) async {
+    if (!connectivityOn) return false;
+    try {
+      final r = await http
+          .post(
+            Uri.parse('$_base/mesh/model-prefs'),
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode({'model': model, 'favorite': favorite}),
+          )
+          .timeout(const Duration(seconds: 10));
+      if (r.statusCode != 200) return false;
+      final seats = cachedSeats();
+      final i = seats.indexWhere((s) => s.model == model);
+      if (i >= 0) {
+        seats[i] = seats[i].copyWith(favorite: favorite);
+        await _box.put('catalog_models', seats.map((s) => s.toMap()).toList());
+      }
+      final nodes = cachedNodeModels();
+      final j = nodes.indexWhere((n) => n.name == model);
+      if (j >= 0) {
+        nodes[j] = MeshNodeModel(
+          name: nodes[j].name,
+          node: nodes[j].node,
+          favorite: favorite,
+        );
+        await _box.put(
+          'catalog_nodes',
+          nodes
+              .map(
+                (m) => {'name': m.name, 'node': m.node, 'favorite': m.favorite},
+              )
+              .toList(),
+        );
+      }
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Favorites first, stable within each class (mesh 0.20 curation:
+  /// a starred model pins to the top of every picker).
+  static List<T> favoritesFirst<T>(List<T> items, bool Function(T) isFav) {
+    final fav = items.where(isFav).toList();
+    final rest = items.where((e) => !isFav(e)).toList();
+    return [...fav, ...rest];
+  }
+
+  // ── Wake box (mesh 0.23/0.24) ─────────────────────────────────
+  // The 'aws' node's wakebox32b: Warm wakes + pre-warms it, Stop
+  // sleeps the instance (storage intact, never terminates). Both
+  // ride the PC gateway, which relays to the VM gateway's creds.
+
+  Future<bool> wakeBox() async {
+    if (!connectivityOn) return false;
+    try {
+      final r = await http
+          .post(Uri.parse('$_base/mesh/wake'))
+          .timeout(const Duration(seconds: 15));
+      return r.statusCode == 200;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Future<bool> sleepBox() async {
+    if (!connectivityOn) return false;
+    try {
+      final r = await http
+          .post(Uri.parse('$_base/mesh/sleep'))
+          .timeout(const Duration(seconds: 15));
+      return r.statusCode == 200;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  // ── Phone-as-node (T-05 app side) ─────────────────────────────
+  // While the phone-node switch is on, this phone joins the mesh as
+  // node "phone": the gateway probes its /api/tags and routes chats
+  // to its /api/chat like any Ollama-shaped node. Heartbeat = a
+  // re-join every 60s (gateway TTL 180s); leaving is explicit.
+
+  static const phoneNodeName = 'phone';
+
+  bool get phoneNodeOn =>
+      _settings.get('mesh_phone_node', defaultValue: false) as bool;
+
+  Timer? _heartbeat;
+  Future<Map<String, dynamic>> Function()? _presencePayload;
+
+  /// The tailnet (100.64.0.0/10) IPv4 of this phone, or null when
+  /// Tailscale is not up.
+  static Future<String?> tailnetIp() async {
+    try {
+      final ifaces = await NetworkInterface.list(
+        type: InternetAddressType.IPv4,
+        includeLoopback: false,
+      );
+      for (final iface in ifaces) {
+        for (final a in iface.addresses) {
+          final parts = a.address.split('.');
+          if (parts.length == 4 && parts[0] == '100') {
+            final second = int.tryParse(parts[1]) ?? 0;
+            if (second >= 64 && second <= 127) return a.address;
+          }
+        }
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  Future<bool> _join(Map<String, dynamic> payload) async {
+    try {
+      final r = await http
+          .post(
+            Uri.parse('$_base/mesh/join'),
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode(payload),
+          )
+          .timeout(const Duration(seconds: 10));
+      return r.statusCode == 200;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Start (or restart) phone-node presence. [payloadOf] is read at
+  /// every heartbeat so the address and model list stay current.
+  Future<bool> startPresence(
+    Future<Map<String, dynamic>> Function() payloadOf,
+  ) async {
+    _presencePayload = payloadOf;
+    await _settings.put('mesh_phone_node', true);
+    final ok = await _join(await payloadOf());
+    _heartbeat?.cancel();
+    _heartbeat = Timer.periodic(const Duration(seconds: 60), (_) async {
+      final p = _presencePayload;
+      if (p != null) _join(await p());
+    });
+    return ok;
+  }
+
+  Future<void> stopPresence({bool leave = true}) async {
+    _heartbeat?.cancel();
+    _heartbeat = null;
+    _presencePayload = null;
+    await _settings.put('mesh_phone_node', false);
+    if (leave && connectivityOn) {
+      try {
+        await http
+            .post(
+              Uri.parse('$_base/mesh/leave'),
+              headers: {'Content-Type': 'application/json'},
+              body: jsonEncode({'name': phoneNodeName}),
+            )
+            .timeout(const Duration(seconds: 8));
+      } catch (_) {}
     }
   }
 
@@ -258,14 +454,15 @@ class MeshService {
         reason = t.isEmpty
             ? 'Mesh answered HTTP ${resp.statusCode}'
             : 'Mesh answered HTTP ${resp.statusCode}: '
-                '${t.length > 180 ? t.substring(0, 180) : t}';
+                  '${t.length > 180 ? t.substring(0, 180) : t}';
       }
       throw Exception(reason);
     }
     try {
-      await for (final line in resp.stream
-          .transform(utf8.decoder)
-          .transform(const LineSplitter())) {
+      await for (final line
+          in resp.stream
+              .transform(utf8.decoder)
+              .transform(const LineSplitter())) {
         final t = line.trim();
         if (t.isEmpty) continue;
         Map<String, dynamic> d;
