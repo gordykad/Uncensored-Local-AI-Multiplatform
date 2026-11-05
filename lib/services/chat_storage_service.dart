@@ -136,4 +136,14 @@ class ChatStorageService extends GetxService {
       (_settingsBox.get('thread_count', defaultValue: 0) as num).toInt();
 
   set threadCount(int value) => _settingsBox.put('thread_count', value);
+
+  /// Flash attention mode (B3 knob — the A/B instrument for the flash
+  /// prefill lever). 'on' reproduces the shipped B2 rule exactly (CPU
+  /// loads enabled, GPU backends auto); 'auto' = auto on all backends;
+  /// 'off' = disabled on all backends. Applies on the next model load.
+  String get flashAttentionMode =>
+      _settingsBox.get('flash_attention_mode', defaultValue: 'on') as String;
+
+  set flashAttentionMode(String value) =>
+      _settingsBox.put('flash_attention_mode', value);
 }

@@ -507,17 +507,28 @@ class ImageGenService {
     final jobId = (jsonDecode(run.body) as Map<String, dynamic>)['id'];
     if (jobId == null) throw Exception('RunPod returned no job id');
 
-    final deadline = DateTime.now().add(const Duration(minutes: 10));
+    final deadline = DateTime.now().add(const Duration(minutes: 20));
     while (DateTime.now().isBefore(deadline)) {
       await Future.delayed(const Duration(seconds: 3));
-      final st = await http
-          .get(
-            Uri.parse('https://api.runpod.ai/v2/$runpodEndpoint/status/$jobId'),
-            headers: headers,
-          )
-          .timeout(const Duration(seconds: 30));
-      if (st.statusCode != 200) continue;
-      final d = jsonDecode(st.body) as Map<String, dynamic>;
+      // 1.11.2: a single slow status read must not kill the item -
+      // the old bare .timeout threw out of the loop while the job
+      // lived on (Kai's 30s TimeoutException, 2026-11-04). Hiccups
+      // surface as a phase and polling continues to the deadline.
+      Map<String, dynamic> d;
+      try {
+        final st = await http
+            .get(
+              Uri.parse(
+                  'https://api.runpod.ai/v2/$runpodEndpoint/status/$jobId'),
+              headers: headers,
+            )
+            .timeout(const Duration(seconds: 30));
+        if (st.statusCode != 200) continue;
+        d = jsonDecode(st.body) as Map<String, dynamic>;
+      } catch (_) {
+        onPhase?.call('Connection hiccup - still waiting');
+        continue;
+      }
       switch (d['status']) {
         case 'IN_QUEUE':
           onPhase?.call('In queue');
@@ -543,7 +554,7 @@ class ImageGenService {
           throw Exception('RunPod job was cancelled');
       }
     }
-    throw Exception('RunPod job timed out after 10 minutes');
+    throw Exception('RunPod job timed out after 20 minutes');
   }
 
   /// Ticket 32: video generation on the same RunPod endpoint. The
@@ -596,14 +607,24 @@ class ImageGenService {
     final deadline = DateTime.now().add(const Duration(minutes: 30));
     while (DateTime.now().isBefore(deadline)) {
       await Future.delayed(const Duration(seconds: 4));
-      final st = await http
-          .get(
-            Uri.parse('https://api.runpod.ai/v2/$runpodEndpoint/status/$jobId'),
-            headers: headers,
-          )
-          .timeout(const Duration(seconds: 30));
-      if (st.statusCode != 200) continue;
-      final d = jsonDecode(st.body) as Map<String, dynamic>;
+      // 1.11.2: same poll tolerance as the image lane - one timed-out
+      // status read reports a hiccup and keeps waiting instead of
+      // failing an item whose job is still rendering server-side.
+      Map<String, dynamic> d;
+      try {
+        final st = await http
+            .get(
+              Uri.parse(
+                  'https://api.runpod.ai/v2/$runpodEndpoint/status/$jobId'),
+              headers: headers,
+            )
+            .timeout(const Duration(seconds: 30));
+        if (st.statusCode != 200) continue;
+        d = jsonDecode(st.body) as Map<String, dynamic>;
+      } catch (_) {
+        onPhase?.call('Connection hiccup - still waiting');
+        continue;
+      }
       switch (d['status']) {
         case 'IN_QUEUE':
           onPhase?.call('In queue');

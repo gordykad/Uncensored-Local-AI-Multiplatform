@@ -61,6 +61,7 @@ class _ImageGenScreenState extends State<ImageGenScreen>
   ImageEntry? _current;
   bool _busy = false;
   String _phase = '';
+  int _batch = 1;
   late final AnimationController _beam;
 
   static const _placeholders = [
@@ -142,35 +143,46 @@ class _ImageGenScreenState extends State<ImageGenScreen>
       await _generateVideo(entry, prompt.trim());
       return;
     }
-    final item = _Item(prompt.trim());
+    // Batch stepper (1.11.2): fire _batch stills back to back, each
+    // its own item with its own random seed server-side. One failure
+    // marks its item and the batch carries on.
+    final total = _batch;
     setState(() {
       _busy = true;
       _phase = 'Starting';
-      _items.add(item);
     });
-    _scrollDown();
-    try {
-      final result = entry.isRunpod
-          ? await _svc.generateRunpod(entry,
-              prompt: item.prompt,
-              onPhase: (p) => _setPhase(item, p))
-          : await _svc.generateOwner(entry,
-              prompt: item.prompt,
-              onPhase: (p) => _setPhase(item, p));
-      item.bytes = result.bytes;
-      item.seed = result.seed;
-      item.status = 'done';
-      // Persist to the Previous Gens gallery (Kai, 2026-11-04).
-      // Fire-and-forget: recordGeneration never throws.
-      _svc.recordGeneration(
-        bytes: result.bytes,
-        prompt: item.prompt,
-        seed: result.seed,
-        model: entry.name,
-      );
-    } catch (e) {
-      item.status = 'error';
-      item.error = e.toString().replaceFirst('Exception: ', '');
+    for (var i = 0; i < total; i++) {
+      final item = _Item(prompt.trim());
+      if (!mounted) return;
+      setState(() {
+        _items.add(item);
+        if (total > 1) _phase = 'Generating ${i + 1} of $total';
+      });
+      _scrollDown();
+      try {
+        final result = entry.isRunpod
+            ? await _svc.generateRunpod(entry,
+                prompt: item.prompt,
+                onPhase: (p) => _setPhase(item, p))
+            : await _svc.generateOwner(entry,
+                prompt: item.prompt,
+                onPhase: (p) => _setPhase(item, p));
+        item.bytes = result.bytes;
+        item.seed = result.seed;
+        item.status = 'done';
+        // Persist to the Previous Gens gallery (Kai, 2026-11-04).
+        // Fire-and-forget: recordGeneration never throws.
+        _svc.recordGeneration(
+          bytes: result.bytes,
+          prompt: item.prompt,
+          seed: result.seed,
+          model: entry.name,
+        );
+      } catch (e) {
+        item.status = 'error';
+        item.error = e.toString().replaceFirst('Exception: ', '');
+      }
+      if (mounted) setState(() {});
     }
     if (mounted) {
       setState(() {
@@ -706,6 +718,46 @@ class _ImageGenScreenState extends State<ImageGenScreen>
           ),
         ),
         const Spacer(),
+        if (e != null && !e.isVideo) ...[
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+            decoration: BoxDecoration(
+              color: AppColors.darkBgPanel,
+              border: Border.all(color: AppColors.darkBorder),
+              borderRadius: BorderRadius.circular(99),
+            ),
+            child: Row(mainAxisSize: MainAxisSize.min, children: [
+              IconButton(
+                onPressed: _batch > 1
+                    ? () => setState(() => _batch--)
+                    : null,
+                icon: const Icon(Icons.remove_rounded, size: 15),
+                color: AppColors.darkTextM,
+                disabledColor: AppColors.darkTextD,
+                padding: EdgeInsets.zero,
+                constraints:
+                    const BoxConstraints(minWidth: 26, minHeight: 26),
+                tooltip: 'Fewer',
+              ),
+              Text('x$_batch',
+                  style: const TextStyle(
+                      color: AppColors.darkText, fontSize: 12.5)),
+              IconButton(
+                onPressed: _batch < 20
+                    ? () => setState(() => _batch++)
+                    : null,
+                icon: const Icon(Icons.add_rounded, size: 15),
+                color: AppColors.darkTextM,
+                disabledColor: AppColors.darkTextD,
+                padding: EdgeInsets.zero,
+                constraints:
+                    const BoxConstraints(minWidth: 26, minHeight: 26),
+                tooltip: 'More',
+              ),
+            ]),
+          ),
+          const SizedBox(width: 2),
+        ],
         // Animate a picture: bring a still in from Photos or Previous
         // Gens (Kai, 2026-11-04: the thread-only Animate button left
         // no way to add a picture).

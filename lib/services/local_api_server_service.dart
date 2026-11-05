@@ -343,6 +343,13 @@ class LocalApiServerService extends GetxService {
 
     final content = buffer.toString().trim();
     final usage = await _usageJson(request.messages, content);
+    // Honest finish_reason (UPDATE 3): 'length' when the completion
+    // ran to the requested token cap, 'stop' otherwise - the old code
+    // hardcoded 'stop' even for capped runs.
+    final finishReason =
+        usage['completion_tokens']! >= request.params.maxTokens
+            ? 'length'
+            : 'stop';
 
     return {
       'id': id,
@@ -353,7 +360,7 @@ class LocalApiServerService extends GetxService {
         {
           'index': 0,
           'message': {'role': 'assistant', 'content': content},
-          'finish_reason': 'stop',
+          'finish_reason': finishReason,
         },
       ],
       'usage': usage,
@@ -388,24 +395,30 @@ class LocalApiServerService extends GetxService {
       _streamChunk(id: id, created: created, delta: {'role': 'assistant'}),
     );
 
+    final streamed = StringBuffer();
     try {
       await for (final token in _llm.generateChatCompletion(
         messages: request.messages,
         params: request.params,
       )) {
         if (token.isEmpty) continue;
+        streamed.write(token);
         chatSink?.add(token);
         writeEvent(
           _streamChunk(id: id, created: created, delta: {'content': token}),
         );
       }
 
+      final usage = await _usageJson(request.messages, streamed.toString());
       writeEvent(
         _streamChunk(
           id: id,
           created: created,
           delta: <String, dynamic>{},
-          finishReason: 'stop',
+          finishReason:
+              usage['completion_tokens']! >= request.params.maxTokens
+                  ? 'length'
+                  : 'stop',
         ),
       );
       response.write('data: [DONE]\n\n');
@@ -605,10 +618,10 @@ class LocalApiServerService extends GetxService {
     List<LlamaChatMessage> messages,
     String completion,
   ) async {
-    final promptText = messages
-        .map((m) => '${m.role.name}: ${m.content}')
-        .join('\n');
-    final promptTokens = await _llm.countTokens(promptText);
+    // UPDATE 3 (B3): prompt tokens are counted on the RENDERED chat
+    // template, never on 'role: content' lines - the old count was
+    // not the prefill the engine actually ran.
+    final promptTokens = await _llm.countPromptTokens(messages);
     final completionTokens = await _llm.countTokens(completion);
     return {
       'prompt_tokens': promptTokens,
@@ -648,7 +661,7 @@ class LocalApiServerService extends GetxService {
   // token, on loopback too. The token is generated on first use and
   // shown in the API screen; regenerating invalidates the old one.
 
-  static const appVersion = '1.11.1';
+  static const appVersion = '1.12.0';
 
   String get adminToken {
     var token = _storage.adminToken;

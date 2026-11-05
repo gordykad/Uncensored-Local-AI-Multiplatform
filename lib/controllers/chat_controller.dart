@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:get/get.dart';
+import 'package:llamadart/llamadart.dart';
 
 import '../models/chat_model.dart';
 import '../models/message_model.dart';
@@ -100,12 +101,6 @@ class ChatController extends GetxController {
     _storage.saveChat(chat);
     chats.refresh();
 
-    // Build message history for LLM
-    final history = chat.messages
-        .where((m) => !m.isSystem)
-        .map((m) => m.toLlamaMessage())
-        .toList();
-
     await _runGeneration(chat, regenerating: false);
   }
 
@@ -124,11 +119,33 @@ class ChatController extends GetxController {
 
   Future<void> _runGeneration(ChatModel chat,
       {required bool regenerating}) async {
-    // Build message history for LLM (system messages excluded)
-    final history = chat.messages
-        .where((m) => !m.isSystem)
-        .map((m) => m.toLlamaMessage())
-        .toList();
+    // Ticket 04 (B3): history rides the engine's own chat template -
+    // a LlamaChatMessage list into generateChatCompletion. The retired
+    // hand-rolled Phi-3 prompt was the prime suspect for both the
+    // <|channel> leak and Shaun's tail-repetition loops. Sampler per
+    // the execution map: temperature from the chat knob, penalty
+    // pinned NEUTRAL at 1.0 (the penalty A/B is measured AFTER the
+    // template fix, never tuned to hide a template bug), topP 0.95,
+    // minP 0.05 - the same set the local API ships.
+    final effectiveSystem = chat.systemPrompt.isNotEmpty
+        ? chat.systemPrompt
+        : systemPrompt.value;
+    final messages = <LlamaChatMessage>[
+      if (effectiveSystem.isNotEmpty)
+        LlamaChatMessage.fromText(
+          role: LlamaChatRole.system,
+          text: effectiveSystem,
+        ),
+      for (final m in chat.messages.where((m) => !m.isSystem))
+        LlamaChatMessage.fromText(
+          role: switch (m.role) {
+            MessageRole.user => LlamaChatRole.user,
+            MessageRole.assistant => LlamaChatRole.assistant,
+            MessageRole.system => LlamaChatRole.system,
+          },
+          text: m.content,
+        ),
+    ];
 
     // Start generation
     isGenerating.value = true;
@@ -139,12 +156,15 @@ class ChatController extends GetxController {
     chat.messages.add(aiMsg);
     chats.refresh();
 
-    final stream = _llm.generate(
-      messages: history,
-      systemPrompt: chat.systemPrompt.isNotEmpty
-          ? chat.systemPrompt
-          : systemPrompt.value,
-      temperature: temperature.value,
+    final stream = _llm.generateChatCompletion(
+      messages: messages,
+      params: GenerationParams(
+        temp: temperature.value,
+        penalty: 1.0,
+        topP: 0.95,
+        minP: 0.05,
+      ),
+      backstop: true,
     );
     await _consumeStream(chat, aiMsg, stream);
   }
@@ -210,7 +230,7 @@ class ChatController extends GetxController {
           .replaceAll(RegExp(
             r'<\|end\|>|<\|eot_id\|>|<\|endoftext\|>|<\|im_end\|>|<\|im_start\|>'
             r'|<end_of_turn>|<start_of_turn>|<\|assistant\|>|<\|user\|>|<\|system\|>'
-            r'|<\|pad\|>|</s>|<s>|\[INST\]|\[/INST\]|\[end\]'
+            r'|<\|pad\|>|</s>|<s>|\[INST\]|\[/INST\]|\[end\]|<\|channel\|>|<channel\|>'
           ), '')
           .trim();
       isGenerating.value = false;

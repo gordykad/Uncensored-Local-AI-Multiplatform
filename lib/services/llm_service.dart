@@ -226,9 +226,16 @@ class LlmService extends GetxService {
       // B2 (ticket 10): flash attention ON for CPU loads — the named
       // prefill lever vs the 1.50 tok/s / TTFT 8.0s / 22.3 tok/s prefill
       // baseline measured in B1. GPU backends keep auto.
-      final flash = parsedBackend == GpuBackend.cpu
-          ? FlashAttention.enabled
-          : FlashAttention.auto;
+      // B3: the stored flash knob now resolves the mode — 'on' keeps
+      // the B2 rule above exactly (the A/B baseline), 'auto' and 'off'
+      // apply across backends.
+      final flash = switch (storage.flashAttentionMode) {
+        'off' => FlashAttention.disabled,
+        'auto' => FlashAttention.auto,
+        _ => parsedBackend == GpuBackend.cpu
+            ? FlashAttention.enabled
+            : FlashAttention.auto,
+      };
       final params = ModelParams(
         contextSize: contextSize,
         gpuLayers: effectiveGpuLayers,
@@ -313,6 +320,8 @@ class LlmService extends GetxService {
     r'|<\|im_start\|>'
     r'|<end_of_turn>'
     r'|<start_of_turn>'
+    r'|<\|channel\|>'
+    r'|<channel\|>'
     r'|<\|assistant\|>'
     r'|<\|user\|>'
     r'|<\|system\|>'
@@ -329,101 +338,27 @@ class LlmService extends GetxService {
     r'<\|user\|>|<\|im_start\|>\s*user|<start_of_turn>\s*user|\[INST\]',
   );
 
-  /// Generate a streaming response.
-  /// [messages] is a list of {role, content} maps.
-  /// [systemPrompt] is prepended as a system message.
-  /// Returns a Stream of String tokens.
-  Stream<String> generate({
-    required List<Map<String, String>> messages,
-    String? systemPrompt,
-    double temperature = 0.7,
-  }) async* {
-    if (_engine == null || !isLoaded.value) {
-      throw StateError('No model loaded. Call loadModel() first.');
-    }
-    if (isGenerating.value) {
-      throw StateError('Another generation is already in progress.');
-    }
-
-    isGenerating.value = true;
-    tokensPerSecond.value = 0.0;
-
-    // Buffer to detect multi-token stop sequences
-    String buffer = '';
-
-    // Fixed meter (ticket 01): tokenize first (outside the watch), then
-    // start the watch as the engine stream is subscribed.
-    final prompt = _buildPrompt(messages, systemPrompt);
-    final promptTokens = await countTokens(prompt);
-    final genWatch = Stopwatch()..start();
-    int eventCount = 0;
-    int? firstEventMs;
-
-    try {
-      await for (final token in _engine!.generate(prompt)) {
-        final nowMs = genWatch.elapsedMilliseconds;
-        firstEventMs ??= nowMs;
-        eventCount++;
-        final decodeMs = nowMs - (firstEventMs ?? nowMs);
-        if (eventCount > 1 && decodeMs > 0) {
-          tokensPerSecond.value = (eventCount - 1) / (decodeMs / 1000);
-        }
-
-        // Accumulate into buffer for stop-pattern detection
-        buffer += token;
-
-        // Check if model is hallucinating a user turn — stop immediately
-        if (_userTurnPattern.hasMatch(buffer)) {
-          final cleaned = buffer
-              .replaceAll(_stopPatterns, '')
-              .replaceAll(_userTurnPattern, '')
-              .trim();
-          if (cleaned.isNotEmpty) {
-            yield cleaned;
-          }
-          break;
-        }
-
-        // Check if buffer contains any stop pattern
-        if (_stopPatterns.hasMatch(buffer)) {
-          // Yield everything before the stop pattern, then stop
-          final cleaned = buffer.replaceAll(_stopPatterns, '').trim();
-          if (cleaned.isNotEmpty) {
-            yield cleaned;
-          }
-          break;
-        }
-
-        // If buffer is getting long enough that we know it's safe, flush it
-        // Keep last 30 chars to detect split stop sequences
-        if (buffer.length > 40) {
-          final safe = buffer.substring(0, buffer.length - 30);
-          buffer = buffer.substring(buffer.length - 30);
-          yield safe;
-        }
-      }
-
-      // Flush any remaining buffer (cleaning all control patterns)
-      if (buffer.isNotEmpty) {
-        final cleaned = buffer
-            .replaceAll(_stopPatterns, '')
-            .replaceAll(_userTurnPattern, '')
-            .trim();
-        if (cleaned.isNotEmpty) {
-          yield cleaned;
-        }
-      }
-    } finally {
-      genWatch.stop();
-      _finishMeter(genWatch, promptTokens, eventCount, firstEventMs);
-      isGenerating.value = false;
-    }
-  }
-
   /// Generate a chat completion using llamadart's chat-template API.
+  ///
+  /// Ticket 04 (B3): this is now THE chat path — the hand-rolled Phi-3
+  /// prompt builder is retired. The engine renders each model's own
+  /// GGUF chat template, so end-of-turn formats are the model's own
+  /// (the old path's prime suspect for the <|channel> leak and the
+  /// tail-repetition loops). Prompt tokens are counted on the RENDERED
+  /// template — the string the engine actually prefills — never on
+  /// summed message contents (Claude UPDATE 3: content sums understate
+  /// prefill and poison the METER).
+  ///
+  /// With [backstop] on (the chat path), emitted text is held behind a
+  /// 30-char window and scanned for leaked template markers; a hit is
+  /// logged as BACKSTOP HIT and ends the stream on the pre-match text.
+  /// It is a logged safety net only — the template path is the fix.
+  /// The API path leaves it off (the engine already separates the
+  /// Gemma reasoning channel from content there).
   Stream<String> generateChatCompletion({
     required List<LlamaChatMessage> messages,
     GenerationParams params = const GenerationParams(),
+    bool backstop = false,
   }) async* {
     if (_engine == null || !isLoaded.value) {
       throw StateError('No model loaded. Call loadModel() first.');
@@ -435,16 +370,39 @@ class LlmService extends GetxService {
     isGenerating.value = true;
     tokensPerSecond.value = 0.0;
 
-    // Fixed meter (ticket 01): same accounting as generate(). Prompt
-    // tokens are the summed token counts of the message contents
-    // (template overhead excluded — noted in the METER log line).
-    var promptTokens = 0;
-    for (final m in messages) {
-      promptTokens += await countTokens(m.content);
+    // Render once: the same string feeds the token count and the
+    // TEMPLATE inspectability log (ticket 04 acceptance #1).
+    String? rendered;
+    try {
+      rendered = (await _engine!.chatTemplate(messages)).prompt;
+    } catch (_) {
+      rendered = null;
     }
+    var promptTokens = 0;
+    if (rendered != null) {
+      promptTokens = await countTokens(rendered);
+    } else {
+      for (final m in messages) {
+        promptTokens += await countTokens(m.content);
+      }
+    }
+    if (backstop) {
+      try {
+        final log = Get.find<LogService>();
+        log.info(
+          'TEMPLATE model=$loadedModelFilename '
+          'chars=${rendered?.length ?? -1} tokens=$promptTokens',
+          source: 'CHAT',
+        );
+        if (rendered != null) log.info(rendered, source: 'TEMPLATE');
+      } catch (_) {}
+    }
+
     final genWatch = Stopwatch()..start();
     int eventCount = 0;
     int? firstEventMs;
+    var buffer = '';
+    var hitBackstop = false;
 
     try {
       await for (final chunk in _engine!.create(
@@ -463,12 +421,68 @@ class LlmService extends GetxService {
         if (eventCount > 1 && decodeMs > 0) {
           tokensPerSecond.value = (eventCount - 1) / (decodeMs / 1000);
         }
-        yield content;
+
+        if (!backstop) {
+          yield content;
+          continue;
+        }
+
+        buffer += content;
+        final userHit = _userTurnPattern.hasMatch(buffer);
+        if (userHit || _stopPatterns.hasMatch(buffer)) {
+          hitBackstop = true;
+          try {
+            Get.find<LogService>().info(
+              'BACKSTOP HIT pattern=${userHit ? 'user-turn' : 'stop-marker'} '
+              'model=$loadedModelFilename',
+              source: 'CHAT',
+            );
+          } catch (_) {}
+          final cleaned = buffer
+              .replaceAll(_stopPatterns, '')
+              .replaceAll(_userTurnPattern, '')
+              .trim();
+          if (cleaned.isNotEmpty) yield cleaned;
+          break;
+        }
+        // Hold back the last 30 chars so a marker split across chunks
+        // is still caught whole.
+        if (buffer.length > 40) {
+          final safe = buffer.substring(0, buffer.length - 30);
+          buffer = buffer.substring(buffer.length - 30);
+          yield safe;
+        }
+      }
+
+      if (backstop && !hitBackstop && buffer.isNotEmpty) {
+        final cleaned = buffer
+            .replaceAll(_stopPatterns, '')
+            .replaceAll(_userTurnPattern, '')
+            .trim();
+        if (cleaned.isNotEmpty) yield cleaned;
       }
     } finally {
       genWatch.stop();
       _finishMeter(genWatch, promptTokens, eventCount, firstEventMs);
       isGenerating.value = false;
+    }
+  }
+
+  /// Token count of the RENDERED chat template for [messages] — the
+  /// honest prefill figure for usage accounting (ticket 04 / Claude
+  /// UPDATE 3). Falls back to summed content counts when the template
+  /// cannot be rendered.
+  Future<int> countPromptTokens(List<LlamaChatMessage> messages) async {
+    if (_engine == null || !isLoaded.value) return 0;
+    try {
+      final rendered = (await _engine!.chatTemplate(messages)).prompt;
+      return await countTokens(rendered);
+    } catch (_) {
+      var sum = 0;
+      for (final m in messages) {
+        sum += await countTokens(m.content);
+      }
+      return sum;
     }
   }
 
@@ -557,31 +571,6 @@ class LlmService extends GetxService {
       final wakelockService = Get.find<WakelockService>();
       await wakelockService.disable();
     } catch (_) {}
-  }
-
-  /// Build a single prompt string from chat messages.
-  String _buildPrompt(
-    List<Map<String, String>> messages,
-    String? systemPrompt,
-  ) {
-    final buffer = StringBuffer();
-
-    if (systemPrompt != null && systemPrompt.isNotEmpty) {
-      buffer.writeln('<|system|>');
-      buffer.writeln(systemPrompt);
-      buffer.writeln('<|end|>');
-    }
-
-    for (final msg in messages) {
-      final role = msg['role'] ?? 'user';
-      final content = msg['content'] ?? '';
-      buffer.writeln('<|$role|>');
-      buffer.writeln(content);
-      buffer.writeln('<|end|>');
-    }
-
-    buffer.writeln('<|assistant|>');
-    return buffer.toString();
   }
 
   @override

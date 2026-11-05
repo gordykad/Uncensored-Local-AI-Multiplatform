@@ -788,7 +788,7 @@ class _SettingsBody extends StatelessWidget {
                     ),
                     const SizedBox(height: 10),
                     Text(
-                      'Astro MiniX 1.11.1 \u00b7 Powered by llamadart + llama.cpp',
+                      'Astro MiniX 1.12.0 \u00b7 Powered by llamadart + llama.cpp',
                       style: TextStyle(fontSize: 11, color: context.textD),
                     ),
                   ],
@@ -899,6 +899,7 @@ class _HardwareSettingsCardState extends State<_HardwareSettingsCard> {
   // Ticket 03 knobs (0 = platform/auto default)
   late int _contextSize;
   late int _threadCount;
+  late String _flashMode;
 
   // Auto-detect the best backend and GPU layers for this device
   static Map<String, dynamic> _detectBestConfig() {
@@ -952,6 +953,7 @@ class _HardwareSettingsCardState extends State<_HardwareSettingsCard> {
     _gpuLayers = widget.storage.gpuLayers.toDouble();
     _contextSize = widget.storage.contextSize;
     _threadCount = widget.storage.threadCount;
+    _flashMode = widget.storage.flashAttentionMode;
   }
 
   void _applyAutoConfig() {
@@ -1166,7 +1168,7 @@ class _HardwareSettingsCardState extends State<_HardwareSettingsCard> {
             ),
             const SizedBox(height: 4),
             Text(
-              'Context and threads apply on the next model load.',
+              'Context, threads and flash attention apply on the next model load.',
               style: TextStyle(color: context.textD, fontSize: 11),
             ),
             const SizedBox(height: 12),
@@ -1191,6 +1193,24 @@ class _HardwareSettingsCardState extends State<_HardwareSettingsCard> {
                 setState(() => _threadCount = values[i]);
                 widget.storage.threadCount = values[i];
               },
+            ),
+            const SizedBox(height: 16),
+            Text('Flash Attention', style: TextStyle(color: context.text, fontSize: 14)),
+            const SizedBox(height: 8),
+            MinixSegmented(
+              options: const ['On', 'Auto', 'Off'],
+              index:
+                  const ['on', 'auto', 'off'].indexOf(_flashMode).clamp(0, 2),
+              onChanged: (i) {
+                const values = ['on', 'auto', 'off'];
+                setState(() => _flashMode = values[i]);
+                widget.storage.flashAttentionMode = values[i];
+              },
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'On keeps the shipped rule (CPU loads on, GPU auto). Flash attention is the prefill lever - A/B it against the METER lines in Diagnostics.',
+              style: TextStyle(color: context.textD, fontSize: 11, height: 1.4),
             ),
           ],
         ],

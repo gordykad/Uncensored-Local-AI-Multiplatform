@@ -18,11 +18,8 @@
 // chunks \S{1,5} every 32ms; app chunks are 3 words per 32ms tick so a
 // full reply lands in seconds, same cadence family).
 import 'dart:async';
-import 'dart:ui' as ui;
+import 'dart:math' as math;
 import 'package:flutter/material.dart';
-
-const _easeOut = Cubic(0.22, 1, 0.36, 1);
-const _easeOut2 = Cubic(0.23, 1, 0.32, 1);
 
 /// The #26 caret: .5em x 1.05em rounded block, accent glow, .9s blink.
 class StreamCaret extends StatefulWidget {
@@ -77,22 +74,30 @@ class _StreamCaretState extends State<StreamCaret>
   }
 }
 
-/// One #26 token with its source entrance.
-class _TokenIn extends StatefulWidget {
+/// Ticket 29 (B3): the word entrance is a GLITCH now, replacing the
+/// #26 blur-rise and the #2 sweep entrances. Mechanics are the
+/// in-tree GlitchText port's (faithful/glitch.dart, bank #13): two
+/// Astro-purple ghost layers (0xFF7E22CE / 0xFFA855F7, glow 7) riding
+/// the source's 6-key pose tracks against the main layer (glow 5),
+/// skew through the same tangent matrix entry, medium preset values
+/// (range 3, skew 1 degree). The one bound the ticket sets: it fires
+/// ONCE on entry (~250 ms) with the jitter envelope decaying to
+/// zero - settled text is a plain static Text, never a looping
+/// glitch, so a 450-word reply stays readable and flat-cost.
+class _GlitchIn extends StatefulWidget {
   final String word;
   final TextStyle style;
-  final bool blur5;
-  const _TokenIn(this.word, {required this.style, this.blur5 = true});
+  const _GlitchIn(this.word, {required this.style});
 
   @override
-  State<_TokenIn> createState() => _TokenInState();
+  State<_GlitchIn> createState() => _GlitchInState();
 }
 
-class _TokenInState extends State<_TokenIn>
+class _GlitchInState extends State<_GlitchIn>
     with SingleTickerProviderStateMixin {
   late final AnimationController _c = AnimationController(
     vsync: this,
-    duration: const Duration(milliseconds: 420),
+    duration: const Duration(milliseconds: 250),
   )..forward();
 
   @override
@@ -101,23 +106,83 @@ class _TokenInState extends State<_TokenIn>
     super.dispose();
   }
 
+  // The source's 6-key pose interpolation (per-segment easeOut).
+  (double, double, double) _pose(
+      List<(double, double, double)> keys, double v) {
+    final t = v * (keys.length - 1);
+    final idx = t.floor().clamp(0, keys.length - 2);
+    final frac = Curves.easeOut.transform(t - idx);
+    final a = keys[idx];
+    final b = keys[idx + 1];
+    return (
+      a.$1 + (b.$1 - a.$1) * frac,
+      a.$2 + (b.$2 - a.$2) * frac,
+      a.$3 + (b.$3 - a.$3) * frac,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return AnimatedBuilder(
       animation: _c,
       builder: (_, __) {
-        final t = _easeOut.transform(_c.value);
-        final w = Text(widget.word, style: widget.style);
-        if (t >= 1) return w;
-        return Opacity(
-          opacity: t,
-          child: ImageFiltered(
-            imageFilter: ui.ImageFilter.blur(
-              sigmaX: (widget.blur5 ? 5 : 3) * (1 - t),
-              sigmaY: (widget.blur5 ? 5 : 3) * (1 - t),
+        final v = _c.value;
+        if (v >= 1) return Text(widget.word, style: widget.style);
+        const r = 3.0;
+        final s = 1.0 * math.pi / 180;
+        final env = 1 - v;
+        final main = <(double, double, double)>[
+          (0, 0, 0),
+          (r, -r, s),
+          (-r, r, -s),
+          (-r, -r, s),
+          (r, r, -s),
+          (0, 0, 0),
+        ];
+        final before = <(double, double, double)>[
+          (0, 0, 0),
+          (-r, r, -s),
+          (r, -r, s),
+          (r, r, -s),
+          (-r, -r, s),
+          (0, 0, 0),
+        ];
+        final after = <(double, double, double)>[
+          (0, 0, 0),
+          (r, -r, -s),
+          (-r, r, s),
+          (r, r, s),
+          (r, -r, -s),
+          (0, 0, 0),
+        ];
+        Widget layer(
+            Color color, List<(double, double, double)> keys, double glow) {
+          final (dx, dy, sk) = _pose(keys, v);
+          return Transform(
+            transform: Matrix4.identity()
+              ..translate(dx * env, dy * env)
+              ..setEntry(1, 0, math.tan(sk * env)),
+            child: Text(
+              widget.word,
+              style: widget.style.copyWith(
+                color: color,
+                shadows: [
+                  Shadow(
+                    color: color.withValues(alpha: 0.25),
+                    blurRadius: glow,
+                  ),
+                ],
+              ),
             ),
-            child: w,
-          ),
+          );
+        }
+
+        return Stack(
+          children: [
+            layer(const Color(0xFF7E22CE), after, 7),
+            layer(const Color(0xFFA855F7), before, 7),
+            layer(widget.style.color ?? const Color(0xFFF2F2F0), main, 5),
+          ],
         );
       },
     );
@@ -132,9 +197,9 @@ class _TokenInState extends State<_TokenIn>
 /// meant thousands of stateful children relaid out on every stream
 /// chunk — the UI thread died mid-generation (Kai, 2026-11-04). Now the
 /// settled prefix renders as ONE plain span in a single paragraph and
-/// only the trailing [_tailWords] words keep their token entrances, so
-/// render cost stays flat no matter how long the reply gets. The token
-/// entrance itself is unchanged; B3's glitch entry still replaces it.
+/// only the trailing [_tailWords] words keep their entrances, so
+/// render cost stays flat no matter how long the reply gets. B3
+/// (ticket 29) swapped the entrance itself for the glitch-in above.
 class StreamReplyText extends StatelessWidget {
   final String text;
   final bool streaming;
@@ -159,7 +224,7 @@ class StreamReplyText extends StatelessWidget {
         crossAxisAlignment: WrapCrossAlignment.center,
         children: [
           for (final w in words)
-            if (w.isNotEmpty) _TokenIn(w, style: style),
+            if (w.isNotEmpty) _GlitchIn(w, style: style),
           StreamCaret(fontSize: style.fontSize ?? 15, color: caretColor),
         ],
       );
@@ -175,7 +240,7 @@ class StreamReplyText extends StatelessWidget {
               WidgetSpan(
                 alignment: PlaceholderAlignment.baseline,
                 baseline: TextBaseline.alphabetic,
-                child: _TokenIn(words[i], style: style),
+                child: _GlitchIn(words[i], style: style),
               ),
           WidgetSpan(
             alignment: PlaceholderAlignment.baseline,
@@ -277,7 +342,7 @@ class _RegenRevealTextState extends State<RegenRevealText> {
       return Wrap(
         children: [
           for (var i = 0; i < shown; i++)
-            if (_words[i].isNotEmpty) _RegenWord(_words[i], widget.style),
+            if (_words[i].isNotEmpty) _GlitchIn(_words[i], style: widget.style),
         ],
       );
     }
@@ -292,56 +357,10 @@ class _RegenRevealTextState extends State<RegenRevealText> {
               WidgetSpan(
                 alignment: PlaceholderAlignment.baseline,
                 baseline: TextBaseline.alphabetic,
-                child: _RegenWord(_words[i], widget.style),
+                child: _GlitchIn(_words[i], style: widget.style),
               ),
         ],
       ),
-    );
-  }
-}
-
-class _RegenWord extends StatefulWidget {
-  final String word;
-  final TextStyle style;
-  const _RegenWord(this.word, this.style);
-
-  @override
-  State<_RegenWord> createState() => _RegenWordState();
-}
-
-class _RegenWordState extends State<_RegenWord>
-    with SingleTickerProviderStateMixin {
-  late final AnimationController _c = AnimationController(
-    vsync: this,
-    duration: const Duration(milliseconds: 320),
-  )..forward();
-
-  @override
-  void dispose() {
-    _c.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return AnimatedBuilder(
-      animation: _c,
-      builder: (_, __) {
-        final t = _easeOut2.transform(_c.value);
-        final w = Text(widget.word, style: widget.style);
-        if (t >= 1) return w;
-        return Opacity(
-          opacity: t,
-          child: Transform.translate(
-            offset: Offset(0, 4 * (1 - t)),
-            child: ImageFiltered(
-              imageFilter:
-                  ui.ImageFilter.blur(sigmaX: 3 * (1 - t), sigmaY: 3 * (1 - t)),
-              child: w,
-            ),
-          ),
-        );
-      },
     );
   }
 }

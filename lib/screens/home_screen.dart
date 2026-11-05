@@ -96,6 +96,16 @@ class _HomeScreenState extends State<HomeScreen> {
     });
   }
 
+  /// Claude C1 (B3): send is only live when something can answer -
+  /// a loaded local model or a selected mesh seat - and the composer
+  /// holds text. Anything else renders the button dim and inert.
+  bool get _canSend {
+    final remoteOn = _modelCtrl.selectedRemote.value != null &&
+        ImageGenService().connectivityOn;
+    return (_llm.isLoaded.value || remoteOn) &&
+        _msgController.text.trim().isNotEmpty;
+  }
+
   void _send() {
     final text = _msgController.text.trim();
     if (text.isEmpty) return;
@@ -589,7 +599,7 @@ class _HomeScreenState extends State<HomeScreen> {
                               ? AppColors.accent
                               : loaded
                               ? AppColors.green
-                              : AppColors.red,
+                              : AppColors.accent,
                         ),
                       ),
                       Flexible(
@@ -607,7 +617,11 @@ class _HomeScreenState extends State<HomeScreen> {
                             fontWeight: active
                                 ? FontWeight.w600
                                 : FontWeight.w500,
-                            color: active ? context.text : context.textD,
+                            color: isLoading
+                                ? context.textD
+                                : active
+                                ? context.text
+                                : AppColors.accent,
                           ),
                         ),
                       ),
@@ -969,7 +983,42 @@ class _HomeScreenState extends State<HomeScreen> {
   // SHARED — Chat area used by both layouts
   // ═══════════════════════════════════════════════════════════════
   Widget _buildChatArea() {
-    return Column(
+    return Stack(
+      children: [
+        // B3 (Claude C3): the KineticGrid is hoisted out of the
+        // welcome body to live behind BOTH the welcome content and
+        // the composer - inside the body alone it ended in a hard
+        // edge above the composer. Welcome-state only, dissolving
+        // through a gradient fade before it reaches the input area.
+        Obx(() {
+          final chat = _chatCtrl.activeChat;
+          final welcome = chat == null || chat.messages.isEmpty;
+          if (!welcome) return const SizedBox.shrink();
+          return Positioned.fill(
+            child: Stack(
+              children: [
+                const Positioned.fill(child: KineticGrid(subtle: true)),
+                Positioned.fill(
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                        colors: [
+                          Colors.transparent,
+                          Colors.transparent,
+                          context.bg,
+                        ],
+                        stops: const [0, 0.7, 1],
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          );
+        }),
+        Column(
       children: [
         Expanded(
           child: Obx(() {
@@ -1012,16 +1061,17 @@ class _HomeScreenState extends State<HomeScreen> {
 
         _buildInputArea(),
       ],
+        ),
+      ],
     );
   }
 
   Widget _buildWelcome() {
-    // Re-port (Kai, 2026-11-03): KineticGrid is the FULL-BLEED background,
-    // the orb is the centerpiece hero, the app icon does NOT appear here.
-    return Stack(
-      children: [
-        const Positioned.fill(child: KineticGrid(subtle: true)),
-        Center(
+    // Re-port (Kai, 2026-11-03): the orb is the centerpiece hero, the
+    // app icon does NOT appear here. The KineticGrid background moved
+    // up into _buildChatArea (B3/C3) so it runs full-bleed behind the
+    // composer too.
+    return Center(
           child: Padding(
             padding: const EdgeInsets.all(32),
             child: Column(
@@ -1035,7 +1085,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
                 const SizedBox(height: 26),
                 BlurReveal(
-                  text: 'How can I help you?',
+                  text: 'What are we running today?',
                   style: TextStyle(
                     fontSize: 22,
                     fontWeight: FontWeight.w600,
@@ -1047,7 +1097,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   () => Text(
                     _llm.isLoaded.value
                         ? 'Type a message below to get started.'
-                        : 'Select a model first to begin chatting.',
+                        : 'Pick a model. Nothing leaves this phone.',
                     style: TextStyle(fontSize: 14, color: context.textM),
                     textAlign: TextAlign.center,
                   ),
@@ -1056,9 +1106,6 @@ class _HomeScreenState extends State<HomeScreen> {
                 const RedactionBars(widths: [110, 76, 128, 58], barHeight: 9),
               ],
             ),
-          ),
-        ),
-      ],
     );
   }
 
@@ -1101,7 +1148,7 @@ class _HomeScreenState extends State<HomeScreen> {
                             'Write a haiku about the ocean at midnight',
                             'Explain it like I am five',
                             'Draft it for me...',
-                            'What should I build next?',
+                            'What should I run next?',
                           ],
                           style: TextStyle(color: context.textD, fontSize: 15),
                         ),
@@ -1142,8 +1189,10 @@ class _HomeScreenState extends State<HomeScreen> {
                       )
                     : _circleButton(
                         icon: Icons.arrow_upward_rounded,
-                        color: AppColors.accent,
-                        onTap: _send,
+                        color: _canSend
+                            ? AppColors.accent
+                            : context.textD,
+                        onTap: _canSend ? _send : null,
                         tooltip: 'Send',
                       ),
               ),
@@ -1173,7 +1222,7 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget _circleButton({
     required IconData icon,
     required Color color,
-    required VoidCallback onTap,
+    required VoidCallback? onTap,
     required String tooltip,
   }) {
     return Tooltip(
