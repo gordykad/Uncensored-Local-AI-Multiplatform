@@ -788,7 +788,7 @@ class _SettingsBody extends StatelessWidget {
                     ),
                     const SizedBox(height: 10),
                     Text(
-                      'Astro MiniX 1.11.0 \u00b7 Powered by llamadart + llama.cpp',
+                      'Astro MiniX 1.11.1 \u00b7 Powered by llamadart + llama.cpp',
                       style: TextStyle(fontSize: 11, color: context.textD),
                     ),
                   ],

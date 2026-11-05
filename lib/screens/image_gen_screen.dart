@@ -17,6 +17,7 @@ import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:path_provider/path_provider.dart';
 
+import 'package:file_picker/file_picker.dart';
 import 'package:video_player/video_player.dart';
 
 import '../models/image_entry.dart';
@@ -224,6 +225,118 @@ class _ImageGenScreenState extends State<ImageGenScreen>
       });
       _scrollDown();
     }
+  }
+
+  /// Animate a picture brought in from outside the thread: Photos
+  /// (file_picker, already a dependency) or a Previous Gens still.
+  /// The composer text, when present, becomes the motion prompt.
+  Future<void> _animatePicture() async {
+    if (_busy) return;
+    final vids = _entries.where((e) => e.isVideo).toList();
+    if (vids.isEmpty) {
+      _toast('Add a video entry first - RunPod lane, Video kind');
+      return;
+    }
+    final src = await showModalBottomSheet<String>(
+      context: context,
+      backgroundColor: AppColors.darkBgPanel,
+      shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(18))),
+      builder: (sheetCtx) => SafeArea(
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          ListTile(
+            leading: const Icon(Icons.photo_library_outlined,
+                color: AppColors.accentHi),
+            title: const Text('From Photos',
+                style: TextStyle(color: AppColors.darkText, fontSize: 14)),
+            onTap: () => Navigator.of(sheetCtx).pop('photos'),
+          ),
+          ListTile(
+            leading: const Icon(Icons.auto_awesome_rounded,
+                color: AppColors.accentHi),
+            title: const Text('From Previous Gens',
+                style: TextStyle(color: AppColors.darkText, fontSize: 14)),
+            onTap: () => Navigator.of(sheetCtx).pop('gens'),
+          ),
+          const SizedBox(height: 8),
+        ]),
+      ),
+    );
+    if (src == null || !mounted) return;
+    List<int>? bytes;
+    if (src == 'photos') {
+      final r = await FilePicker.platform
+          .pickFiles(type: FileType.image, withData: true);
+      if (r == null || r.files.isEmpty) return;
+      bytes = r.files.first.bytes;
+      if (bytes == null && r.files.first.path != null) {
+        bytes = await File(r.files.first.path!).readAsBytes();
+      }
+    } else {
+      final rec = await _pickGenStill();
+      if (rec == null) return;
+      bytes = await File(rec.file).readAsBytes();
+    }
+    if (bytes == null || !mounted) return;
+    final entry = (_current?.isVideo ?? false) ? _current! : vids.first;
+    final typed = _input.text.trim();
+    _generateVideo(
+        entry,
+        typed.isEmpty
+            ? 'slow cinematic push-in, gentle natural motion'
+            : typed,
+        imageBytes: bytes);
+  }
+
+  Future<GenRecord?> _pickGenStill() {
+    final recs = _svc.history().where((r) => !r.isVideo).toList();
+    if (recs.isEmpty) {
+      _toast('No saved stills yet');
+      return Future.value(null);
+    }
+    return showModalBottomSheet<GenRecord>(
+      context: context,
+      backgroundColor: AppColors.darkBgPanel,
+      shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(18))),
+      builder: (sheetCtx) => SafeArea(
+        child: SizedBox(
+          height: 430,
+          child: Column(children: [
+            const Padding(
+              padding: EdgeInsets.fromLTRB(18, 16, 18, 8),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: Text('Pick a still to animate',
+                    style: TextStyle(
+                        color: AppColors.darkText,
+                        fontSize: 14.5,
+                        fontWeight: FontWeight.w600)),
+              ),
+            ),
+            Expanded(
+              child: GridView.builder(
+                padding: const EdgeInsets.fromLTRB(14, 4, 14, 14),
+                gridDelegate:
+                    const SliverGridDelegateWithFixedCrossAxisCount(
+                        crossAxisCount: 3,
+                        crossAxisSpacing: 8,
+                        mainAxisSpacing: 8),
+                itemCount: recs.length,
+                itemBuilder: (_, i) => GestureDetector(
+                  onTap: () => Navigator.of(sheetCtx).pop(recs[i]),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(8),
+                    child: Image.file(File(recs[i].file),
+                        fit: BoxFit.cover, cacheWidth: 300),
+                  ),
+                ),
+              ),
+            ),
+          ]),
+        ),
+      ),
+    );
   }
 
   /// Animate a finished still with the selected (or first) video
@@ -593,6 +706,15 @@ class _ImageGenScreenState extends State<ImageGenScreen>
           ),
         ),
         const Spacer(),
+        // Animate a picture: bring a still in from Photos or Previous
+        // Gens (Kai, 2026-11-04: the thread-only Animate button left
+        // no way to add a picture).
+        IconButton(
+          onPressed: _animatePicture,
+          icon: const Icon(Icons.add_photo_alternate_outlined,
+              size: 19, color: AppColors.darkTextM),
+          tooltip: 'Animate a picture',
+        ),
         // Previous Gens lives HERE, inside the studio (Kai, 2026-11-04:
         // not a dock tab of its own).
         IconButton(
