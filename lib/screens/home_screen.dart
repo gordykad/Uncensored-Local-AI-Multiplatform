@@ -1106,6 +1106,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 const RedactionBars(widths: [110, 76, 128, 58], barHeight: 9),
               ],
             ),
+          ),
     );
   }
 
