@@ -7,6 +7,7 @@ import 'package:flutter_animate/flutter_animate.dart';
 import '../theme/app_colors.dart';
 import '../controllers/model_controller.dart';
 import '../services/model_manager.dart';
+import '../services/model_classifier.dart';
 import '../services/model_pins_service.dart';
 import '../services/mesh_service.dart';
 import '../services/haptics.dart';
@@ -34,7 +35,17 @@ class ModelLibraryScreen extends StatelessWidget {
   }
 }
 
-enum _Filter { all, downloaded, uncensored, custom }
+enum _Filter {
+  all,
+  downloaded,
+  uncensored,
+  custom,
+  chat,
+  code,
+  vision,
+  reasoning,
+  base,
+}
 
 class _ModelLibraryBody extends StatefulWidget {
   final bool showBackButton;
@@ -160,6 +171,12 @@ class _ModelLibraryBodyState extends State<_ModelLibraryBody> {
               _chip(context, 'Downloaded', _Filter.downloaded),
               _chip(context, 'Uncensored', _Filter.uncensored),
               _chip(context, 'Custom', _Filter.custom),
+              // Ticket 25: capability tag filters.
+              _chip(context, 'Chat', _Filter.chat),
+              _chip(context, 'Code', _Filter.code),
+              _chip(context, 'Vision', _Filter.vision),
+              _chip(context, 'Reasoning', _Filter.reasoning),
+              _chip(context, 'Base', _Filter.base),
             ],
           ),
         ),
@@ -186,6 +203,15 @@ class _ModelLibraryBodyState extends State<_ModelLibraryBody> {
                 break;
               case _Filter.custom:
                 filtered = allCatalog.where((m) => m.isCustom).toList();
+                break;
+              case _Filter.chat:
+              case _Filter.code:
+              case _Filter.vision:
+              case _Filter.reasoning:
+              case _Filter.base:
+                filtered = allCatalog
+                    .where((m) => m.tags.contains(_filter.name))
+                    .toList();
                 break;
               case _Filter.all:
               default:
@@ -293,6 +319,8 @@ class _ModelLibraryBodyState extends State<_ModelLibraryBody> {
                       GestureDetector(
                         onLongPress: model.hasRemoteUrl
                             ? () => _pinSheet(context, model)
+                            : model.isCustom
+                            ? () => _tagEditor(context, model)
                             : null,
                         child: ModelCard(
                           model: model,
@@ -788,6 +816,105 @@ class _ModelLibraryBodyState extends State<_ModelLibraryBody> {
   /// Mesh 0.17: Kai smoke-tests unverified seats by picking them;
   /// when one earns it he flips it verified - the same flip the
   /// console toggle makes (POST /mesh/model-prefs on the gateway).
+  /// Ticket 25: manual tag editor. Saving marks the record
+  /// tagsSource 'manual' — the classifier never overwrites it.
+  void _tagEditor(BuildContext context, AiModelInfo model) {
+    final selected = model.tags.toSet();
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: context.bgPanel,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
+      ),
+      builder: (sheetCtx) => StatefulBuilder(
+        builder: (sheetCtx, setSheet) => SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 18, 20, 16),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Tags for ${model.name}',
+                  style: TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w600,
+                    color: context.text,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  'Hand-set tags are yours. Auto-classifying never overwrites them.',
+                  style: TextStyle(fontSize: 12, color: context.textM),
+                ),
+                const SizedBox(height: 14),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    for (final t in ModelClassifier.tagOrder)
+                      FilterChip(
+                        label: Text(
+                          t.toUpperCase(),
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: selected.contains(t)
+                                ? Colors.white
+                                : context.textM,
+                          ),
+                        ),
+                        selected: selected.contains(t),
+                        onSelected: (on) => setSheet(
+                          () => on ? selected.add(t) : selected.remove(t),
+                        ),
+                        selectedColor: AppColors.accent,
+                        backgroundColor: context.bgPanel,
+                        side: BorderSide(
+                          color: selected.contains(t)
+                              ? AppColors.accent
+                              : context.border,
+                        ),
+                        showCheckmark: false,
+                      ),
+                  ],
+                ),
+                const SizedBox(height: 18),
+                SizedBox(
+                  width: double.infinity,
+                  child: FilledButton(
+                    style: FilledButton.styleFrom(
+                      backgroundColor: AppColors.accent,
+                    ),
+                    onPressed: () {
+                      Navigator.of(sheetCtx).pop();
+                      TapFx.select();
+                      final tags = ModelClassifier.tagOrder
+                          .where(selected.contains)
+                          .toList();
+                      Get.find<ModelManager>().updateCustomModel(
+                        model.copyWith(
+                          tags: tags,
+                          tagsSource: 'manual',
+                          label: tags.contains('uncensored')
+                              ? 'UNCENSORED'
+                              : (model.label == 'UNCENSORED'
+                                    ? 'CUSTOM'
+                                    : model.label),
+                        ),
+                      );
+                      setState(() {});
+                    },
+                    child: const Text('Save tags'),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   void _seatVerifySheet(BuildContext context, MeshSeat s) {
     final target = !s.verifiedOverride;
     showModalBottomSheet<void>(
@@ -964,6 +1091,26 @@ class _ModelLibraryBodyState extends State<_ModelLibraryBody> {
                 );
               },
             ),
+            // Ticket 25: hand-editing tags lives here for custom
+            // models (the classifier never overwrites manual tags).
+            if (model.isCustom)
+              ListTile(
+                leading: const Icon(
+                  Icons.sell_outlined,
+                  color: AppColors.accentHi,
+                ),
+                title: Text('Edit tags', style: TextStyle(color: context.text)),
+                subtitle: Text(
+                  model.tags.isEmpty
+                      ? 'No tags yet'
+                      : model.tags.map((t) => t.toUpperCase()).join(' · '),
+                  style: TextStyle(color: context.textM, fontSize: 12),
+                ),
+                onTap: () {
+                  Navigator.of(sheetCtx).pop();
+                  _tagEditor(context, model);
+                },
+              ),
           ],
         ),
       ),

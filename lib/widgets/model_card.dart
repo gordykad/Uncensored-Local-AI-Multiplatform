@@ -54,10 +54,10 @@ class ModelCard extends StatelessWidget {
           color: isLoaded
               ? AppColors.accent.withOpacity(0.5)
               : isLoadingModel
-                  ? AppColors.orange.withOpacity(0.5)
-                  : isCurrentlyDownloading
-                      ? AppColors.orange.withOpacity(0.4)
-                      : context.border,
+              ? AppColors.orange.withOpacity(0.5)
+              : isCurrentlyDownloading
+              ? AppColors.orange.withOpacity(0.4)
+              : context.border,
         ),
       ),
       child: Padding(
@@ -71,13 +71,21 @@ class ModelCard extends StatelessWidget {
               runSpacing: 6,
               children: [
                 _labelBadge(model.label, model.isUncensored),
-                if (model.badge.isNotEmpty)
-                  _accentBadge(model.badge),
-                if (isLoaded) _statusBadge('LOADED', AppColors.green, Icons.check_circle),
+                if (model.badge.isNotEmpty) _accentBadge(model.badge),
+                if (isLoaded)
+                  _statusBadge('LOADED', AppColors.green, Icons.check_circle),
                 if (isLoadingModel)
-                  _statusBadge('LOADING', AppColors.orange, Icons.hourglass_top_rounded),
+                  _statusBadge(
+                    'LOADING',
+                    AppColors.orange,
+                    Icons.hourglass_top_rounded,
+                  ),
                 if (isCurrentlyDownloading)
-                  _statusBadge('DOWNLOADING', AppColors.orange, Icons.downloading_rounded),
+                  _statusBadge(
+                    'DOWNLOADING',
+                    AppColors.orange,
+                    Icons.downloading_rounded,
+                  ),
               ],
             ),
 
@@ -93,6 +101,40 @@ class ModelCard extends StatelessWidget {
               ),
             ),
 
+            // ── Capability tags (ticket 25) ─────────────────────
+            if (model.tags.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 6,
+                runSpacing: 6,
+                children: [
+                  for (final t in model.tags)
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 3,
+                      ),
+                      decoration: BoxDecoration(
+                        color: AppColors.accent.withValues(alpha: 0.12),
+                        borderRadius: BorderRadius.circular(999),
+                        border: Border.all(
+                          color: AppColors.accent.withValues(alpha: 0.45),
+                        ),
+                      ),
+                      child: Text(
+                        t.toUpperCase(),
+                        style: const TextStyle(
+                          fontSize: 10,
+                          fontWeight: FontWeight.w600,
+                          letterSpacing: 0.6,
+                          color: AppColors.accentHi,
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ],
+
             const SizedBox(height: 6),
 
             // ── Size and RAM ──────────────────────────────────────
@@ -105,8 +147,10 @@ class ModelCard extends StatelessWidget {
                   children: [
                     Icon(Icons.storage_rounded, size: 14, color: context.textD),
                     const SizedBox(width: 4),
-                    Text('${model.sizeGb} GB',
-                        style: TextStyle(fontSize: 12, color: context.textM)),
+                    Text(
+                      '${model.sizeGb} GB',
+                      style: TextStyle(fontSize: 12, color: context.textM),
+                    ),
                   ],
                 ),
                 Row(
@@ -114,18 +158,26 @@ class ModelCard extends StatelessWidget {
                   children: [
                     Icon(Icons.memory_rounded, size: 14, color: context.textD),
                     const SizedBox(width: 4),
-                    Text('Min ${model.minRamGb} GB RAM',
-                        style: TextStyle(fontSize: 12, color: context.textM)),
+                    Text(
+                      'Min ${model.minRamGb} GB RAM',
+                      style: TextStyle(fontSize: 12, color: context.textM),
+                    ),
                   ],
                 ),
                 if (isDownloaded && !isCurrentlyDownloading)
                   const Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      Icon(Icons.check_circle_rounded, size: 14, color: AppColors.green),
+                      Icon(
+                        Icons.check_circle_rounded,
+                        size: 14,
+                        color: AppColors.green,
+                      ),
                       SizedBox(width: 4),
-                      Text('Downloaded',
-                          style: TextStyle(fontSize: 12, color: AppColors.green)),
+                      Text(
+                        'Downloaded',
+                        style: TextStyle(fontSize: 12, color: AppColors.green),
+                      ),
                     ],
                   ),
               ],
@@ -159,7 +211,8 @@ class ModelCard extends StatelessWidget {
             ],
 
             // ── Action buttons ────────────────────────────────────
-            if (!isCurrentlyDownloading && !isLoadingModel) _buildActions(context),
+            if (!isCurrentlyDownloading && !isLoadingModel)
+              _buildActions(context),
           ],
         ),
       ),
@@ -221,12 +274,18 @@ class ModelCard extends StatelessWidget {
                 onPressed: onCancelLoad,
                 style: TextButton.styleFrom(
                   foregroundColor: AppColors.red,
-                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 6,
+                  ),
                   minimumSize: Size.zero,
                   tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                 ),
                 icon: const Icon(Icons.stop_circle_outlined, size: 16),
-                label: const Text('Stop', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
+                label: const Text(
+                  'Stop',
+                  style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
+                ),
               ),
           ],
         ),
@@ -258,7 +317,10 @@ class ModelCard extends StatelessWidget {
             Text(
               '${ds.percent.toStringAsFixed(1)}%',
               style: const TextStyle(
-                  fontSize: 13, fontWeight: FontWeight.w600, color: AppColors.accentHi),
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+                color: AppColors.accentHi,
+              ),
             ),
             const SizedBox(width: 12),
             Container(
@@ -334,14 +396,13 @@ class ModelCard extends StatelessWidget {
               style: OutlinedButton.styleFrom(
                 foregroundColor: AppColors.accentHi,
                 side: const BorderSide(color: AppColors.accent),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(8),
+                ),
               ),
             ),
           ),
-          if (onRemoveCustom != null) ...[
-            const SizedBox(width: 8),
-            removeIcon,
-          ],
+          if (onRemoveCustom != null) ...[const SizedBox(width: 8), removeIcon],
         ],
 
         if (!isDownloaded && !(model.isCustom && !model.hasRemoteUrl)) ...[
@@ -351,10 +412,14 @@ class ModelCard extends StatelessWidget {
               icon: const Icon(Icons.download_rounded, size: 16),
               label: Text('Download (${model.sizeGb} GB)'),
               style: ElevatedButton.styleFrom(
-                backgroundColor: context.isDark ? context.text : AppColors.accent,
+                backgroundColor: context.isDark
+                    ? context.text
+                    : AppColors.accent,
                 foregroundColor: context.isDark ? context.bg : Colors.white,
                 elevation: 0,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(8),
+                ),
               ),
             ),
           ),
@@ -374,7 +439,9 @@ class ModelCard extends StatelessWidget {
                 backgroundColor: AppColors.green,
                 foregroundColor: Colors.white,
                 elevation: 0,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(8),
+                ),
               ),
             ),
           ),
@@ -394,11 +461,20 @@ class ModelCard extends StatelessWidget {
           Expanded(
             child: OutlinedButton.icon(
               onPressed: null,
-              icon: const Icon(Icons.check_circle_rounded, size: 16, color: AppColors.green),
-              label: const Text('Active', style: TextStyle(color: AppColors.green)),
+              icon: const Icon(
+                Icons.check_circle_rounded,
+                size: 16,
+                color: AppColors.green,
+              ),
+              label: const Text(
+                'Active',
+                style: TextStyle(color: AppColors.green),
+              ),
               style: OutlinedButton.styleFrom(
                 side: const BorderSide(color: AppColors.green),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(8),
+                ),
               ),
             ),
           ),
@@ -415,7 +491,11 @@ class ModelCard extends StatelessWidget {
                   borderRadius: BorderRadius.circular(8),
                   child: const Padding(
                     padding: EdgeInsets.all(8),
-                    child: Icon(Icons.eject_rounded, size: 20, color: AppColors.orange),
+                    child: Icon(
+                      Icons.eject_rounded,
+                      size: 20,
+                      color: AppColors.orange,
+                    ),
                   ),
                 ),
               ),
@@ -486,8 +566,14 @@ class ModelCard extends StatelessWidget {
         children: [
           Icon(icon, size: 12, color: color),
           const SizedBox(width: 4),
-          Text(text,
-              style: TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: color)),
+          Text(
+            text,
+            style: TextStyle(
+              fontSize: 10,
+              fontWeight: FontWeight.w700,
+              color: color,
+            ),
+          ),
         ],
       ),
     );

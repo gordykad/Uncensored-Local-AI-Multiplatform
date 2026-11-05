@@ -9,6 +9,8 @@ import 'package:http/http.dart' as http;
 import 'package:path_provider/path_provider.dart';
 import 'package:path/path.dart' as p;
 
+import 'model_classifier.dart';
+
 import '../models/ai_model_info.dart';
 import '../models/download_state.dart';
 import 'background_download_service.dart';
@@ -17,8 +19,9 @@ import 'wakelock_service.dart';
 /// Manages model catalog, downloads, and local file discovery.
 class ModelManager extends GetxService {
   final catalog = <AiModelInfo>[].obs;
-  final downloadedModels = <String>[].obs; // filenames on-disk (list for reactivity)
-  
+  final downloadedModels =
+      <String>[].obs; // filenames on-disk (list for reactivity)
+
   // ── Download tracking (single reactive object) ─────────────
   final activeDownloads = <String, DownloadState>{}.obs;
   final tick = 0.obs; // force UI refresh counter
@@ -31,6 +34,9 @@ class ModelManager extends GetxService {
     await _loadCatalog();
     await scanDownloaded();
     if (Platform.isIOS) await _adoptBackgroundDownloads();
+    // Ticket 25: one-time classification pass over the existing
+    // library (untagged custom records only), off the startup path.
+    unawaited(classifyLibraryOnce());
     return this;
   }
 
@@ -40,7 +46,11 @@ class ModelManager extends GetxService {
     if (Platform.isLinux || Platform.isWindows || Platform.isMacOS) {
       try {
         final execDir = Platform.resolvedExecutable;
-        final usbShared = p.join(p.dirname(p.dirname(execDir)), 'Shared', 'models');
+        final usbShared = p.join(
+          p.dirname(p.dirname(execDir)),
+          'Shared',
+          'models',
+        );
         if (await Directory(usbShared).exists()) {
           return usbShared;
         }
@@ -68,8 +78,9 @@ class ModelManager extends GetxService {
     try {
       final jsonStr = await rootBundle.loadString('assets/models_catalog.json');
       final list = jsonDecode(jsonStr) as List;
-      catalog.value =
-          list.map((j) => AiModelInfo.fromJson(j as Map<String, dynamic>)).toList();
+      catalog.value = list
+          .map((j) => AiModelInfo.fromJson(j as Map<String, dynamic>))
+          .toList();
     } catch (e) {
       // Catalog couldn't load — will be empty
     }
@@ -77,9 +88,12 @@ class ModelManager extends GetxService {
     // Load persisted custom models
     try {
       final box = Hive.box('models_meta');
-      final customList = box.get('custom_models', defaultValue: <dynamic>[]) as List;
+      final customList =
+          box.get('custom_models', defaultValue: <dynamic>[]) as List;
       for (final raw in customList) {
-        final model = AiModelInfo.fromJson(Map<String, dynamic>.from(raw as Map));
+        final model = AiModelInfo.fromJson(
+          Map<String, dynamic>.from(raw as Map),
+        );
         // Don't add duplicates
         if (!catalog.any((m) => m.id == model.id)) {
           catalog.add(model);
@@ -103,8 +117,10 @@ class ModelManager extends GetxService {
   }
 
   String getModelPath(AiModelInfo model) => p.join(_modelsDir, model.filename);
-  String getModelPathByFilename(String filename) => p.join(_modelsDir, filename);
-  bool isModelDownloaded(AiModelInfo model) => downloadedModels.contains(model.filename);
+  String getModelPathByFilename(String filename) =>
+      p.join(_modelsDir, filename);
+  bool isModelDownloaded(AiModelInfo model) =>
+      downloadedModels.contains(model.filename);
 
   /// Is this model currently downloading?
   bool isDownloading(String filename) {
@@ -300,7 +316,8 @@ class ModelManager extends GetxService {
       state.receivedBytes = existingBytes.toDouble();
 
       final sink = partFile.openWrite(
-          mode: existingBytes > 0 ? FileMode.append : FileMode.write);
+        mode: existingBytes > 0 ? FileMode.append : FileMode.write,
+      );
 
       int receivedBytes = existingBytes;
       final stopwatch = Stopwatch()..start();
@@ -317,7 +334,8 @@ class ModelManager extends GetxService {
 
         // Calculate speed every 500ms
         if (stopwatch.elapsedMilliseconds - lastSpeedCheck > 500) {
-          final elapsed = (stopwatch.elapsedMilliseconds - lastSpeedCheck) / 1000;
+          final elapsed =
+              (stopwatch.elapsedMilliseconds - lastSpeedCheck) / 1000;
           final bytesDelta = receivedBytes - lastSpeedBytes;
           state.speedBytesPerSec = bytesDelta / elapsed;
           lastSpeedCheck = stopwatch.elapsedMilliseconds;
@@ -327,7 +345,8 @@ class ModelManager extends GetxService {
           // Update foreground notification with progress
           if (wakelockService != null && state.totalBytes > 0) {
             final progress = state.receivedBytes / state.totalBytes;
-            final speedMb = (state.speedBytesPerSec / (1024 * 1024)).toStringAsFixed(1);
+            final speedMb = (state.speedBytesPerSec / (1024 * 1024))
+                .toStringAsFixed(1);
             wakelockService.updateDownloadProgress(
               modelName: model.name,
               progress: progress,
@@ -434,7 +453,7 @@ class ModelManager extends GetxService {
   }) async {
     final destPath = p.join(_modelsDir, filename);
     final destFile = File(destPath);
-    
+
     final sink = destFile.openWrite();
     int copiedBytes = 0;
     bool wasCancelled = false;
@@ -475,14 +494,18 @@ class ModelManager extends GetxService {
   }
 
   /// Import a model file from external path with progress tracking.
-  Future<void> importModel(String sourcePath, {Function(double)? onProgress, bool Function()? checkCancelled}) async {
+  Future<void> importModel(
+    String sourcePath, {
+    Function(double)? onProgress,
+    bool Function()? checkCancelled,
+  }) async {
     final filename = p.basename(sourcePath);
     final destPath = p.join(_modelsDir, filename);
 
     if (sourcePath != destPath) {
       final sourceFile = File(sourcePath);
       final destFile = File(destPath);
-      
+
       final totalBytes = await sourceFile.length();
       if (totalBytes == 0) return;
 
@@ -526,10 +549,65 @@ class ModelManager extends GetxService {
     }
   }
 
-  /// Add custom model to catalog and persist it.
+  /// Add custom model to catalog and persist it. Ticket 25: the
+  /// record is classified on arrival (filename heuristics now, a
+  /// GGUF header refine pass right after via refineCustomModel).
   void addCustomModel(AiModelInfo model) {
-    catalog.add(model);
+    catalog.add(ModelClassifier.apply(model));
     _persistCustomModels();
+    refineCustomModel(model.filename);
+  }
+
+  /// Ticket 25 refine pass: read the model's own GGUF header and
+  /// re-derive its clean name + tags from real metadata. Runs on
+  /// arrival and once over the existing library at startup.
+  /// Manual records are never touched; fully local, no network.
+  Future<void> refineCustomModel(String filename) async {
+    final idx = catalog.indexWhere((m) => m.filename == filename);
+    if (idx == -1) return;
+    final model = catalog[idx];
+    if (!model.isCustom || model.tagsSource == 'manual') return;
+    final file = File(p.join(_modelsDir, filename));
+    if (!await file.exists()) return;
+    final header = await readGgufHeader(file);
+    var hasMmproj = false;
+    try {
+      final stem = filename
+          .replaceAll(RegExp(r'\.gguf$', caseSensitive: false), '')
+          .toLowerCase();
+      await for (final f in Directory(_modelsDir).list()) {
+        if (f is File) {
+          final b = p.basename(f.path).toLowerCase();
+          if (b.contains('mmproj') &&
+              stem.startsWith(b.split('-mmproj').first)) {
+            hasMmproj = true;
+            break;
+          }
+        }
+      }
+    } catch (_) {}
+    final refined = ModelClassifier.apply(
+      model,
+      header: header,
+      hasMmproj: hasMmproj,
+    );
+    if (refined.name != model.name ||
+        refined.tags.join() != model.tags.join() ||
+        refined.label != model.label) {
+      catalog[idx] = refined;
+      _persistCustomModels();
+      _notifyUI();
+    }
+  }
+
+  /// Ticket 25 one-time library pass: classify every custom model
+  /// that has no tags yet (records from before this build).
+  Future<void> classifyLibraryOnce() async {
+    for (final m in catalog.toList()) {
+      if (m.isCustom && m.tags.isEmpty && m.tagsSource != 'manual') {
+        await refineCustomModel(m.filename);
+      }
+    }
   }
 
   /// Replace a custom model's persisted record (ticket 20: attach or fix

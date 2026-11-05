@@ -6,10 +6,15 @@ class AiModelInfo {
   final String url;
   final double sizeGb;
   final int minRamGb;
-  final String label;        // UNCENSORED / STANDARD / CUSTOM
-  final String badge;        // RECOMMENDED, HERETIC, etc.
+  final String label; // UNCENSORED / STANDARD / CUSTOM
+  final String badge; // RECOMMENDED, HERETIC, etc.
   final String systemPrompt;
   final bool recommended;
+  // Ticket 25: capability tags from the classifier (chat / code /
+  // vision / reasoning / uncensored / base). tagsSource 'manual'
+  // means Kai hand-edited them — the classifier never overwrites.
+  final List<String> tags;
+  final String tagsSource;
 
   const AiModelInfo({
     required this.id,
@@ -22,6 +27,8 @@ class AiModelInfo {
     required this.badge,
     required this.systemPrompt,
     this.recommended = false,
+    this.tags = const [],
+    this.tagsSource = 'auto',
   });
 
   factory AiModelInfo.fromJson(Map<String, dynamic> json) {
@@ -36,39 +43,56 @@ class AiModelInfo {
       badge: json['badge'] as String? ?? '',
       systemPrompt: json['systemPrompt'] as String? ?? '',
       recommended: json['recommended'] as bool? ?? false,
+      tags:
+          (json['tags'] as List?)?.map((e) => e.toString()).toList() ??
+          const [],
+      tagsSource: json['tagsSource'] as String? ?? 'auto',
     );
   }
 
   Map<String, dynamic> toJson() => {
-        'id': id,
-        'name': name,
-        'filename': filename,
-        'url': url,
-        'sizeGb': sizeGb,
-        'minRamGb': minRamGb,
-        'label': label,
-        'badge': badge,
-        'systemPrompt': systemPrompt,
-        'recommended': recommended,
-      };
+    'id': id,
+    'name': name,
+    'filename': filename,
+    'url': url,
+    'sizeGb': sizeGb,
+    'minRamGb': minRamGb,
+    'label': label,
+    'badge': badge,
+    'systemPrompt': systemPrompt,
+    'recommended': recommended,
+    'tags': tags,
+    'tagsSource': tagsSource,
+  };
 
   /// True when this entry carries a real remote source URL it can be
   /// (re)downloaded from. File imports persist the literal 'local' — they
   /// have no source until the user attaches one (ticket 20).
   bool get hasRemoteUrl => url.startsWith('http');
 
-  AiModelInfo copyWith({String? url, double? sizeGb, int? minRamGb, String? badge}) {
+  AiModelInfo copyWith({
+    String? url,
+    double? sizeGb,
+    int? minRamGb,
+    String? badge,
+    String? name,
+    String? label,
+    List<String>? tags,
+    String? tagsSource,
+  }) {
     return AiModelInfo(
       id: id,
-      name: name,
+      name: name ?? this.name,
       filename: filename,
       url: url ?? this.url,
       sizeGb: sizeGb ?? this.sizeGb,
       minRamGb: minRamGb ?? this.minRamGb,
-      label: label,
+      label: label ?? this.label,
       badge: badge ?? this.badge,
       systemPrompt: systemPrompt,
       recommended: recommended,
+      tags: tags ?? this.tags,
+      tagsSource: tagsSource ?? this.tagsSource,
     );
   }
 
