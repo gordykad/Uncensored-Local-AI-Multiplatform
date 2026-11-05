@@ -833,7 +833,7 @@ class _SettingsBody extends StatelessWidget {
                     ),
                     const SizedBox(height: 10),
                     Text(
-                      'Astro MiniX 1.17.0 \u00b7 Powered by llamadart + llama.cpp',
+                      'Astro MiniX 1.18.0 \u00b7 Powered by llamadart + llama.cpp',
                       style: TextStyle(fontSize: 11, color: context.textD),
                     ),
                   ],
@@ -950,6 +950,8 @@ class _HardwareSettingsCardState extends State<_HardwareSettingsCard> {
   // Ticket 03 knobs (0 = platform/auto default)
   late int _contextSize;
   late int _threadCount;
+  late int _cpuMoeLayers;
+  late int _moeCacheMb;
   late String _flashMode;
 
   // Auto-detect the best backend and GPU layers for this device
@@ -1009,6 +1011,8 @@ class _HardwareSettingsCardState extends State<_HardwareSettingsCard> {
     _contextSize = widget.storage.contextSize;
     _threadCount = widget.storage.threadCount;
     _flashMode = widget.storage.flashAttentionMode;
+    _cpuMoeLayers = widget.storage.cpuMoeLayers;
+    _moeCacheMb = widget.storage.moeCacheMb;
   }
 
   void _applyAutoConfig() {
@@ -1304,6 +1308,52 @@ class _HardwareSettingsCardState extends State<_HardwareSettingsCard> {
             const SizedBox(height: 4),
             Text(
               'On keeps the shipped rule (CPU loads on, GPU auto). Flash attention is the prefill lever - A/B it against the METER lines in Diagnostics.',
+              style: TextStyle(color: context.textD, fontSize: 11, height: 1.4),
+            ),
+            const SizedBox(height: 16),
+            Text(
+              'MoE Host Expert Layers',
+              style: TextStyle(color: context.text, fontSize: 14),
+            ),
+            const SizedBox(height: 8),
+            MinixSegmented(
+              options: const ['Off', '4', '8', '16', 'All'],
+              index: const [0, 4, 8, 16, -1].indexOf(_cpuMoeLayers).clamp(0, 4),
+              onChanged: (i) {
+                const values = [0, 4, 8, 16, -1];
+                setState(() => _cpuMoeLayers = values[i]);
+                widget.storage.cpuMoeLayers = values[i];
+              },
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'Keeps the first layers of a mixture-of-experts model in phone memory instead of the GPU, so a 26B can fit. Dense models ignore it.',
+              style: TextStyle(color: context.textD, fontSize: 11, height: 1.4),
+            ),
+            const SizedBox(height: 16),
+            Text(
+              'MoE Expert Cache',
+              style: TextStyle(color: context.text, fontSize: 14),
+            ),
+            const SizedBox(height: 8),
+            MinixSegmented(
+              options: const ['Off', '256 MB', '512 MB', '1 GB', '2 GB'],
+              index: const [
+                0,
+                256,
+                512,
+                1024,
+                2048,
+              ].indexOf(_moeCacheMb).clamp(0, 4),
+              onChanged: (i) {
+                const values = [0, 256, 512, 1024, 2048];
+                setState(() => _moeCacheMb = values[i]);
+                widget.storage.moeCacheMb = values[i];
+              },
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'GPU cache for hot experts - the speed lever for MoE models. Turning it on also disables CPU weight repacking, the ticket 12 safety rule.',
               style: TextStyle(color: context.textD, fontSize: 11, height: 1.4),
             ),
           ],

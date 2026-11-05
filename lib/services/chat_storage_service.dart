@@ -146,4 +146,22 @@ class ChatStorageService extends GetxService {
 
   set flashAttentionMode(String value) =>
       _settingsBox.put('flash_attention_mode', value);
+
+  /// MoE expert placement (tickets 12 + 19, rescoped 2026-11-05:
+  /// the pinned llamadart already ships the machinery). Host
+  /// layers: the first N layers' expert tensors stay in host
+  /// memory (llama.cpp's --n-cpu-moe pattern); -1 = every layer.
+  /// Cache MB: the MoE expert cache budget on the GPU (Metal
+  /// qualified); setting it also disables CPU weight repacking,
+  /// which is ticket 12's safety gate. Both 0 = shipped behavior.
+  /// Applies on the next model load.
+  int get cpuMoeLayers =>
+      (_settingsBox.get('cpu_moe_layers', defaultValue: 0) as num).toInt();
+
+  set cpuMoeLayers(int value) => _settingsBox.put('cpu_moe_layers', value);
+
+  int get moeCacheMb =>
+      (_settingsBox.get('moe_cache_mb', defaultValue: 0) as num).toInt();
+
+  set moeCacheMb(int value) => _settingsBox.put('moe_cache_mb', value);
 }

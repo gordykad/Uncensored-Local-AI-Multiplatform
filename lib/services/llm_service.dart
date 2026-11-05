@@ -76,7 +76,9 @@ class LlmService extends GetxService {
   /// Load a GGUF model from [path] with progress tracking.
   Future<void> loadModel(String path) async {
     LogService? log;
-    try { log = Get.find<LogService>(); } catch (_) {}
+    try {
+      log = Get.find<LogService>();
+    } catch (_) {}
 
     // Verify file exists first
     final file = File(path);
@@ -232,9 +234,10 @@ class LlmService extends GetxService {
       final flash = switch (storage.flashAttentionMode) {
         'off' => FlashAttention.disabled,
         'auto' => FlashAttention.auto,
-        _ => parsedBackend == GpuBackend.cpu
-            ? FlashAttention.enabled
-            : FlashAttention.auto,
+        _ =>
+          parsedBackend == GpuBackend.cpu
+              ? FlashAttention.enabled
+              : FlashAttention.auto,
       };
       final params = ModelParams(
         contextSize: contextSize,
@@ -243,9 +246,17 @@ class LlmService extends GetxService {
         numberOfThreads: threads,
         numberOfThreadsBatch: threads,
         flashAttention: flash,
+        // Tickets 12 + 19: MoE expert placement. Dormant at the
+        // shipped defaults (0/0); a cache budget also turns CPU
+        // weight repacking off inside llamadart (ticket 12).
+        cpuMoeLayers: storage.cpuMoeLayers,
+        moeCacheBytes: storage.moeCacheMb * 1024 * 1024,
       );
 
-      log?.info('Backend=$parsedBackend, GPU layers=$effectiveGpuLayers (stored $userGpuLayers), ctx=$contextSize, threads=$threads', source: 'LLM');
+      log?.info(
+        'Backend=$parsedBackend, GPU layers=$effectiveGpuLayers (stored $userGpuLayers), ctx=$contextSize, threads=$threads, cpuMoe=${storage.cpuMoeLayers}, moeCacheMb=${storage.moeCacheMb}',
+        source: 'LLM',
+      );
 
       // B2: loadModel() is deprecated in llamadart 0.17.x — setModel is
       // the migration target (same fresh-engine-per-load pattern).
