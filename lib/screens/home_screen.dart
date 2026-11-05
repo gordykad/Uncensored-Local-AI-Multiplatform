@@ -15,6 +15,7 @@ import '../widgets/chat_sidebar.dart';
 import '../widgets/chat_bubble.dart';
 import '../widgets/faithful/orb.dart';
 import '../widgets/faithful/kinetic.dart';
+import '../widgets/faithful/morph_orb.dart';
 import '../widgets/faithful/textfx.dart';
 import '../widgets/faithful/stream.dart';
 import '../widgets/faithful/nexus_velocity.dart';
@@ -43,6 +44,8 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _sidebarOpen = true;
   bool _loggedBuild = false; // build 18 diagnostics
   String? _dissolvingText; // ticket 08: Nexus send disintegration
+  int _stopCount = 0; // 1.13.0: MorphOrb reads stop taps (no check ball)
+  final _composerSlotKey = GlobalKey(); // MorphOrb pill home rect
   bool _autoScrollToBottom = true;
   String? _lastRenderedChatId;
 
@@ -539,6 +542,48 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  /// 1.13.0: the generation stop button for both top bars. The
+  /// MorphOrb pill becomes the orb during a run (exactly as the
+  /// artifact), so stop lives up here instead (Kai's call).
+  Widget _stopChip() {
+    return Obx(() {
+      if (!_chatCtrl.isGenerating.value) return const SizedBox.shrink();
+      return Padding(
+        padding: const EdgeInsets.only(right: 4),
+        child: InkWell(
+          onTap: () {
+            setState(() => _stopCount++);
+            _chatCtrl.stopGeneration();
+          },
+          borderRadius: BorderRadius.circular(20),
+          child: Container(
+            height: 36,
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            decoration: BoxDecoration(
+              color: AppColors.red,
+              borderRadius: BorderRadius.circular(20),
+            ),
+            child: const Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(Icons.stop_rounded, size: 16, color: Colors.white),
+                SizedBox(width: 5),
+                Text(
+                  'Stop',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    });
+  }
+
   Widget _buildMobileTopBar() {
     return Container(
       height: 52,
@@ -637,6 +682,11 @@ class _HomeScreenState extends State<HomeScreen> {
               }),
             ),
           ),
+
+          // 1.13.0: generation stop lives HERE (Kai: "a stop button
+          // somewhere else") — the composer pill becomes the orb
+          // during a run, so stop rides the top bar.
+          _stopChip(),
 
           // New chat button — on the right
           IconButton(
@@ -889,6 +939,9 @@ class _HomeScreenState extends State<HomeScreen> {
 
           const Spacer(),
 
+          // 1.13.0: generation stop (see _stopChip).
+          _stopChip(),
+
           // Engine status
           Obx(
             () => Row(
@@ -1062,6 +1115,30 @@ class _HomeScreenState extends State<HomeScreen> {
         _buildInputArea(),
       ],
         ),
+        // 1.13.0: MorphOrb composer (variant #5, Answer Card Mode,
+        // exactly as the artifact) — the pill lives in this overlay
+        // at its home slot; on send it collapses into the orb, flies
+        // to center stage, thinks, resolves, condenses to the check.
+        // Driven by real generation state throughout.
+        Obx(() {
+          final chat = _chatCtrl.activeChat;
+          final gen = _chatCtrl.isGenerating.value;
+          var failed = false;
+          if (!gen && chat != null && chat.messages.isNotEmpty) {
+            final last = chat.messages.last;
+            if (last.isAssistant) failed = last.content.startsWith('⚠');
+          }
+          return MorphOrbComposer(
+            controller: _msgController,
+            onSend: _send,
+            canSend: _canSend,
+            running: gen,
+            failed: failed,
+            stopCount: _stopCount,
+            reducedMotion: MediaQuery.of(context).disableAnimations,
+            slotKey: _composerSlotKey,
+          );
+        }),
       ],
     );
   }
@@ -1111,96 +1188,40 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _buildInputArea() {
+    // 1.13.0: the composer pill itself lives in the MorphOrb overlay
+    // (it collapses into the orb on send, exactly as the artifact).
+    // What remains here is its invisible home-rect slot: a mirror of
+    // the field's text so multiline growth reserves the exact height
+    // the real pill takes, plus the ticket-08 dissolve overlay.
     return Stack(
       children: [
         Container(
           padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
-      child: Container(
-        decoration: BoxDecoration(
-          color: context.bgInput,
-          border: Border.all(color: context.border),
-          borderRadius: BorderRadius.circular(24),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withOpacity(context.isDark ? 0.15 : 0.04),
-              blurRadius: 8,
-              offset: const Offset(0, 2),
-            ),
-          ],
-        ),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.end,
-          children: [
-            // Composer orb REMOVED (Kai, 2026-11-03: "2 orbs" — the
-            // welcome hero is the one orb; the composer stays clean).
-            const SizedBox(width: 8),
-            // Text field — #24 rotating placeholder while empty
-            Expanded(
-              child: Stack(
-                alignment: Alignment.centerLeft,
+          child: Container(
+            key: _composerSlotKey,
+            child: Opacity(
+              opacity: 0,
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.center,
                 children: [
-                  if (_msgController.text.isEmpty)
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(14, 0, 8, 0),
-                      child: IgnorePointer(
-                        child: RotatingPlaceholder(
-                          placeholders: const [
-                            'Ask anything...',
-                            'Write a haiku about the ocean at midnight',
-                            'Explain it like I am five',
-                            'Draft it for me...',
-                            'What should I run next?',
-                          ],
-                          style: TextStyle(color: context.textD, fontSize: 15),
-                        ),
+                  const SizedBox(width: 42),
+                  Expanded(
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(2, 14, 8, 14),
+                      child: Text(
+                        _msgController.text.isEmpty
+                            ? ' '
+                            : _msgController.text,
+                        maxLines: 5,
+                        style: const TextStyle(fontSize: 15, height: 1.4),
                       ),
                     ),
-                  TextField(
-                    controller: _msgController,
-                    maxLines: 5,
-                    minLines: 1,
-                    textInputAction: TextInputAction.newline,
-                    style: TextStyle(
-                      fontSize: 15,
-                      color: context.text,
-                      height: 1.4,
-                    ),
-                    decoration: const InputDecoration(
-                      border: InputBorder.none,
-                      enabledBorder: InputBorder.none,
-                      focusedBorder: InputBorder.none,
-                      contentPadding: EdgeInsets.fromLTRB(14, 14, 8, 14),
-                    ),
-                    onSubmitted: (_) => _send(),
                   ),
+                  const SizedBox(width: 48),
                 ],
               ),
             ),
-
-            // Send / Stop
-            Padding(
-              padding: const EdgeInsets.only(right: 8, bottom: 6),
-              child: Obx(
-                () => _chatCtrl.isGenerating.value
-                    ? _circleButton(
-                        icon: Icons.stop_rounded,
-                        color: AppColors.red,
-                        onTap: _chatCtrl.stopGeneration,
-                        tooltip: 'Stop',
-                      )
-                    : _circleButton(
-                        icon: Icons.arrow_upward_rounded,
-                        color: _canSend
-                            ? AppColors.accent
-                            : context.textD,
-                        onTap: _canSend ? _send : null,
-                        tooltip: 'Send',
-                      ),
-              ),
-            ),
-          ],
-        ),
-        ),
+          ),
         ),
         if (_dissolvingText != null)
           Positioned.fill(
@@ -1217,27 +1238,6 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
           ),
       ],
-    );
-  }
-
-  Widget _circleButton({
-    required IconData icon,
-    required Color color,
-    required VoidCallback? onTap,
-    required String tooltip,
-  }) {
-    return Tooltip(
-      message: tooltip,
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(20),
-        child: Container(
-          width: 36,
-          height: 36,
-          decoration: BoxDecoration(color: color, shape: BoxShape.circle),
-          child: Icon(icon, size: 20, color: Colors.white),
-        ),
-      ),
     );
   }
 }
