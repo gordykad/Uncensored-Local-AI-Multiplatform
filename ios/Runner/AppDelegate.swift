@@ -362,9 +362,11 @@ final class MiniXDownloads: NSObject, URLSessionDownloadDelegate, UNUserNotifica
     setStatus(filename, ["status": "downloading", "received": 0, "total": 0])
     task.resume()
     postStartedNotification(name: displayName)
+    MiniXLiveActivity.shared.started(filename: filename, name: displayName)
   }
 
   func cancel(filename: String) {
+    MiniXLiveActivity.shared.finished(filename: filename, ok: false, cancelled: true)
     tasks[filename]?.cancel()
     tasks.removeValue(forKey: filename)
     taskOwner.removeValue(forKey: filename)
@@ -464,6 +466,9 @@ final class MiniXDownloads: NSObject, URLSessionDownloadDelegate, UNUserNotifica
       "received": Int(totalBytesWritten),
       "total": Int(totalBytesExpectedToWrite),
     ])
+    MiniXLiveActivity.shared.progress(
+      filename: filename,
+      received: totalBytesWritten, total: totalBytesExpectedToWrite)
   }
 
   func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask,
@@ -503,10 +508,12 @@ final class MiniXDownloads: NSObject, URLSessionDownloadDelegate, UNUserNotifica
     if let failure = failure {
       setStatus(fname, ["status": "failed", "received": 0, "total": 0, "error": failure])
       postFailureNotification(name: name, error: failure)
+      MiniXLiveActivity.shared.finished(filename: fname, ok: false)
     } else {
       let size = (try? FileManager.default.attributesOfItem(atPath: dest.path)[.size] as? NSNumber)?.intValue ?? 0
       setStatus(fname, ["status": "completed", "received": size, "total": size])
       postCompletionNotification(name: name)
+      MiniXLiveActivity.shared.finished(filename: fname, ok: true)
     }
   }
 
@@ -525,6 +532,7 @@ final class MiniXDownloads: NSObject, URLSessionDownloadDelegate, UNUserNotifica
     current["status"] = "failed"
     current["error"] = nsError.localizedDescription
     setStatus(filename, current)
+    MiniXLiveActivity.shared.finished(filename: filename, ok: false)
     let name = allMeta()[filename]?["name"] as? String ?? filename
     postFailureNotification(name: name, error: nsError.localizedDescription)
   }

@@ -801,7 +801,7 @@ class LocalApiServerService extends GetxService {
   // token, on loopback too. The token is generated on first use and
   // shown in the API screen; regenerating invalidates the old one.
 
-  static const appVersion = '1.16.1';
+  static const appVersion = '1.17.0';
 
   String get adminToken {
     var token = _storage.adminToken;
