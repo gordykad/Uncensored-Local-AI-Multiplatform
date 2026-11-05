@@ -96,6 +96,10 @@ class _ModelLibraryBodyState extends State<_ModelLibraryBody> {
 
   final _searchCtrl = TextEditingController();
   String _query = '';
+  // Set when a folder file pick focuses the list on one model;
+  // drives the "From <folder>" bar with the way back to the
+  // full page (Kai hit a dead end here on 1.16.0).
+  ({String collection, String model})? _folderFocus;
 
   @override
   void dispose() {
@@ -283,36 +287,114 @@ class _ModelLibraryBodyState extends State<_ModelLibraryBody> {
                   _sectionTitle(context, 'Collections'),
                   const SizedBox(height: 4),
                   SizedBox(
-                    height: 350,
-                    child: PageView(
-                      controller: PageController(viewportFraction: 0.94),
-                      children: [
-                        for (final c in _collections(allCatalog))
-                          Padding(
-                            padding: const EdgeInsets.only(right: 8),
-                            child: GlassFolderPack(
-                              label: c.label,
-                              meta:
-                                  '${c.models.length} ${c.models.length == 1 ? 'model' : 'models'}',
-                              seed: 3 + c.index * 4,
-                              files: [
-                                for (final m in c.models)
-                                  (
-                                    name: m.name,
-                                    meta:
-                                        '${m.sizeGb} GB - ${_quantOf(m.filename)}',
-                                  ),
-                              ],
-                              onFileSelect: (idx) {
-                                if (idx < 0 || idx >= c.models.length) return;
-                                setState(() => _query = c.models[idx].name);
-                              },
-                            ),
-                          ),
-                      ],
+                    height: 404,
+                    child: Builder(
+                      builder: (context) {
+                        final cols = _collections(allCatalog);
+                        return PageView.builder(
+                          controller: PageController(viewportFraction: 0.94),
+                          itemCount: cols.length,
+                          itemBuilder: (context, i) {
+                            final c = cols[i];
+                            return Center(
+                              child: GlassFolderPack(
+                                label: c.label,
+                                meta:
+                                    '${c.models.length} ${c.models.length == 1 ? 'model' : 'models'}',
+                                seed: 3 + c.index * 4,
+                                files: [
+                                  for (final m in c.models)
+                                    (
+                                      name: m.name,
+                                      meta:
+                                          '${m.sizeGb} GB - ${_quantOf(m.filename)}',
+                                    ),
+                                ],
+                                onFileSelect: (idx) {
+                                  if (idx < 0 || idx >= c.models.length) {
+                                    return;
+                                  }
+                                  final name = c.models[idx].name;
+                                  _searchCtrl.text = name;
+                                  setState(() {
+                                    _folderFocus = (
+                                      collection: c.label,
+                                      model: name,
+                                    );
+                                    _query = name;
+                                  });
+                                },
+                              ),
+                            );
+                          },
+                        );
+                      },
                     ),
                   ),
                   const SizedBox(height: 8),
+                ],
+
+                // ── Folder focus bar: the way back ──────
+                if (_folderFocus != null) ...[
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 8,
+                    ),
+                    decoration: BoxDecoration(
+                      color: AppColors.accent.withValues(alpha: 0.12),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(
+                        color: AppColors.accent.withValues(alpha: 0.45),
+                      ),
+                    ),
+                    child: Row(
+                      children: [
+                        const Icon(
+                          Icons.folder_open_outlined,
+                          size: 16,
+                          color: AppColors.accentHi,
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            'From ${_folderFocus!.collection}: ${_folderFocus!.model}',
+                            style: TextStyle(fontSize: 12, color: context.text),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                        GestureDetector(
+                          onTap: () {
+                            _searchCtrl.clear();
+                            setState(() {
+                              _folderFocus = null;
+                              _query = '';
+                            });
+                          },
+                          child: const Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text(
+                                'Show all',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w600,
+                                  color: AppColors.accentHi,
+                                ),
+                              ),
+                              SizedBox(width: 4),
+                              Icon(
+                                Icons.close,
+                                size: 14,
+                                color: AppColors.accentHi,
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 12),
                 ],
 
                 // ── Pinned for the fleet (ticket 30) ─────
@@ -905,7 +987,7 @@ class _ModelLibraryBodyState extends State<_ModelLibraryBody> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  'Tags for ${model.name}',
+                  'File ${model.name} into collections',
                   style: TextStyle(
                     fontSize: 15,
                     fontWeight: FontWeight.w600,
@@ -914,7 +996,7 @@ class _ModelLibraryBodyState extends State<_ModelLibraryBody> {
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  'Hand-set tags are yours. Auto-classifying never overwrites them.',
+                  'Each tag is a folder above. Hand-filed models stay where you put them - auto-classifying never overwrites them.',
                   style: TextStyle(fontSize: 12, color: context.textM),
                 ),
                 const SizedBox(height: 14),
@@ -961,20 +1043,10 @@ class _ModelLibraryBodyState extends State<_ModelLibraryBody> {
                       final tags = ModelClassifier.tagOrder
                           .where(selected.contains)
                           .toList();
-                      Get.find<ModelManager>().updateCustomModel(
-                        model.copyWith(
-                          tags: tags,
-                          tagsSource: 'manual',
-                          label: tags.contains('uncensored')
-                              ? 'UNCENSORED'
-                              : (model.label == 'UNCENSORED'
-                                    ? 'CUSTOM'
-                                    : model.label),
-                        ),
-                      );
+                      Get.find<ModelManager>().setModelTags(model, tags);
                       setState(() {});
                     },
-                    child: const Text('Save tags'),
+                    child: const Text('Save'),
                   ),
                 ),
               ],
@@ -1161,26 +1233,30 @@ class _ModelLibraryBodyState extends State<_ModelLibraryBody> {
                 );
               },
             ),
-            // Ticket 25: hand-editing tags lives here for custom
-            // models (the classifier never overwrites manual tags).
-            if (model.isCustom)
-              ListTile(
-                leading: const Icon(
-                  Icons.sell_outlined,
-                  color: AppColors.accentHi,
-                ),
-                title: Text('Edit tags', style: TextStyle(color: context.text)),
-                subtitle: Text(
-                  model.tags.isEmpty
-                      ? 'No tags yet'
-                      : model.tags.map((t) => t.toUpperCase()).join(' · '),
-                  style: TextStyle(color: context.textM, fontSize: 12),
-                ),
-                onTap: () {
-                  Navigator.of(sheetCtx).pop();
-                  _tagEditor(context, model);
-                },
+            // Ticket 25 (Kai, 1.16.1): filing a model into the
+            // folder collections lives in the long-press menu for
+            // EVERY model — collections are the tags, and the
+            // classifier never overwrites hand-filed ones.
+            ListTile(
+              leading: const Icon(
+                Icons.sell_outlined,
+                color: AppColors.accentHi,
               ),
+              title: Text(
+                'Collections & tags',
+                style: TextStyle(color: context.text),
+              ),
+              subtitle: Text(
+                model.tags.isEmpty
+                    ? 'No tags yet'
+                    : model.tags.map((t) => t.toUpperCase()).join(' · '),
+                style: TextStyle(color: context.textM, fontSize: 12),
+              ),
+              onTap: () {
+                Navigator.of(sheetCtx).pop();
+                _tagEditor(context, model);
+              },
+            ),
           ],
         ),
       ),

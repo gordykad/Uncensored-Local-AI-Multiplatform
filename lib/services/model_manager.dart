@@ -100,6 +100,26 @@ class ModelManager extends GetxService {
         }
       }
     } catch (_) {}
+
+    // Ticket 25: Kai's hand-filed collections for catalog models
+    // (per-device tag overrides) ride on top of the shipped tags.
+    try {
+      final box = Hive.box('models_meta');
+      final overrides = Map<String, dynamic>.from(
+        box.get('tag_overrides', defaultValue: <String, dynamic>{}) as Map,
+      );
+      for (var i = 0; i < catalog.length; i++) {
+        final o = overrides[catalog[i].filename];
+        if (o is Map && !catalog[i].isCustom) {
+          final m = Map<String, dynamic>.from(o);
+          catalog[i] = catalog[i].copyWith(
+            tags: (m['tags'] as List?)?.map((e) => e.toString()).toList(),
+            tagsSource: m['tagsSource'] as String? ?? 'manual',
+            label: m['label'] as String?,
+          );
+        }
+      }
+    } catch (_) {}
   }
 
   /// Scan the models directory for downloaded .gguf files.
@@ -608,6 +628,41 @@ class ModelManager extends GetxService {
         await refineCustomModel(m.filename);
       }
     }
+  }
+
+  /// Ticket 25 (Kai, 1.16.1): put a model into collections by hand
+  /// from the long-press menu. Collections ARE the capability tags:
+  /// adding a tag files the model into that folder. Works for
+  /// catalog models too — theirs persist as per-device overrides
+  /// in models_meta. The record is marked manual either way, so
+  /// the classifier never overwrites Kai's filing.
+  void setModelTags(AiModelInfo model, List<String> tags) {
+    final updated = model.copyWith(
+      tags: tags,
+      tagsSource: 'manual',
+      label: tags.contains('uncensored')
+          ? 'UNCENSORED'
+          : (model.label == 'UNCENSORED'
+                ? (model.isCustom ? 'CUSTOM' : 'STANDARD')
+                : model.label),
+    );
+    if (model.isCustom) {
+      updateCustomModel(updated);
+      return;
+    }
+    final idx = catalog.indexWhere((m) => m.id == model.id);
+    if (idx != -1) catalog[idx] = updated;
+    final box = Hive.box('models_meta');
+    final overrides = Map<String, dynamic>.from(
+      box.get('tag_overrides', defaultValue: <String, dynamic>{}) as Map,
+    );
+    overrides[model.filename] = {
+      'tags': tags,
+      'tagsSource': 'manual',
+      'label': updated.label,
+    };
+    box.put('tag_overrides', overrides);
+    _notifyUI();
   }
 
   /// Replace a custom model's persisted record (ticket 20: attach or fix

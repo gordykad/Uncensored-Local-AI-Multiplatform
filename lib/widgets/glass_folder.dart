@@ -56,6 +56,11 @@ class _GlassFolderPackState extends State<GlassFolderPack> {
     'art': 'none',
     'action': 'none',
     'seed': widget.seed,
+    // Astro OS's exact frame contract: width prop 340 inside a
+    // 352x404 frame (page.ts iframe.pack-folder). Without the
+    // width the component lays out at desktop scale and the
+    // fan-out clips (Kai's 1.16.0 screenshot).
+    'width': 340,
     'files': [
       for (final f in widget.files) {'name': f.name, 'meta': f.meta},
     ],
@@ -120,7 +125,12 @@ class _GlassFolderPackState extends State<GlassFolderPack> {
   @override
   Widget build(BuildContext context) {
     final ctrl = _ctrl;
-    if (ctrl == null) return const SizedBox(height: 350);
-    return SizedBox(height: 350, child: WebViewWidget(controller: ctrl));
+    if (ctrl == null) return const SizedBox(width: 352, height: 404);
+    // Astro OS's folder frame box: 352x404, flex none.
+    return SizedBox(
+      width: 352,
+      height: 404,
+      child: WebViewWidget(controller: ctrl),
+    );
   }
 }
