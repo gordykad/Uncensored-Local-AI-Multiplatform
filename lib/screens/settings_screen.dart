@@ -697,9 +697,8 @@ class _SettingsBody extends StatelessWidget {
                           ),
                         ),
                         ElevatedButton(
-                          onPressed: () {
-                            chatCtrl.chats.clear();
-                            chatCtrl.activeChatId.value = null;
+                          onPressed: () async {
+                            await chatCtrl.deleteAllChats();
                             Get.back();
                             Get.snackbar(
                               'Done',
@@ -789,7 +788,7 @@ class _SettingsBody extends StatelessWidget {
                     ),
                     const SizedBox(height: 10),
                     Text(
-                      'Astro MiniX 1.10.2 \u00b7 Powered by llamadart + llama.cpp',
+                      'Astro MiniX 1.10.3 \u00b7 Powered by llamadart + llama.cpp',
                       style: TextStyle(fontSize: 11, color: context.textD),
                     ),
                   ],

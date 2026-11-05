@@ -114,6 +114,30 @@ class CustomConnectionsService {
     }
   }
 
+  /// Read an error response's body so the chat bubble carries the
+  /// server's actual reason instead of a bare status code. OpenAI-
+  /// shaped bodies nest the message under error.message.
+  Future<String> _httpError(
+      CustomConnection conn, http.StreamedResponse resp) async {
+    final body = await resp.stream.bytesToString();
+    String reason = '';
+    try {
+      final d = jsonDecode(body) as Map<String, dynamic>;
+      final e = d['error'];
+      if (e is Map) reason = e['message']?.toString() ?? '';
+      if (reason.isEmpty && e != null) reason = e.toString();
+    } catch (_) {}
+    if (reason.isEmpty) {
+      final t = body.trim();
+      reason = t.isEmpty
+          ? ''
+          : (t.length > 180 ? t.substring(0, 180) : t);
+    }
+    return reason.isEmpty
+        ? '${conn.name} answered HTTP ${resp.statusCode}'
+        : '${conn.name}: $reason';
+  }
+
   Stream<String> _streamOpenAi(
     CustomConnection conn,
     List<Map<String, String>> messages,
@@ -132,8 +156,9 @@ class CustomConnectionsService {
     });
     final resp = await client.send(req).timeout(const Duration(seconds: 30));
     if (resp.statusCode != 200) {
+      final err = await _httpError(conn, resp);
       client.close();
-      throw Exception('${conn.name} answered HTTP ${resp.statusCode}');
+      throw Exception(err);
     }
     try {
       await for (final line in resp.stream
@@ -180,8 +205,9 @@ class CustomConnectionsService {
     });
     final resp = await client.send(req).timeout(const Duration(seconds: 30));
     if (resp.statusCode != 200) {
+      final err = await _httpError(conn, resp);
       client.close();
-      throw Exception('${conn.name} answered HTTP ${resp.statusCode}');
+      throw Exception(err);
     }
     try {
       await for (final line in resp.stream

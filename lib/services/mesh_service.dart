@@ -28,20 +28,38 @@ class MeshSeat {
   final String lane;
   final String group;
   final String status; // 'proven' | 'unverified'
+  // Mesh 0.17 fields (from GET /lanes/models, computed live by the
+  // serving gateway): unverified seats ROUTE - picking one is Kai's
+  // smoke test - and only blocked seats are dead.
+  final bool available;
+  final String? blocked; // reason, only when truly unservable
+  final bool unverifiedFlag;
+  final bool verifiedOverride; // Kai flipped it via /mesh/model-prefs
   const MeshSeat({
     required this.model,
     required this.lane,
     required this.group,
     required this.status,
+    this.available = true,
+    this.blocked,
+    this.unverifiedFlag = false,
+    this.verifiedOverride = false,
   });
 
   bool get proven => status == 'proven';
+  bool get isVerified => proven || verifiedOverride;
+  bool get isBlocked => !available;
+  bool get unverified => !isVerified && (unverifiedFlag || !proven);
 
   factory MeshSeat.fromMap(Map m) => MeshSeat(
         model: m['model']?.toString() ?? '',
         lane: m['lane']?.toString() ?? '',
         group: m['group']?.toString() ?? '',
         status: m['status']?.toString() ?? 'unverified',
+        available: m['available'] != false,
+        blocked: m['blocked']?.toString(),
+        unverifiedFlag: m['unverified'] == true,
+        verifiedOverride: m['verified_override'] == true,
       );
 
   Map<String, dynamic> toMap() => {
@@ -49,6 +67,10 @@ class MeshSeat {
         'lane': lane,
         'group': group,
         'status': status,
+        'available': available,
+        if (blocked != null) 'blocked': blocked,
+        'unverified': unverifiedFlag,
+        'verified_override': verifiedOverride,
       };
 }
 
@@ -163,6 +185,45 @@ class MeshService {
         .toList();
   }
 
+  /// Flip a seat's verified state on the serving gateway (mesh 0.17:
+  /// POST /mesh/model-prefs {model, verified}). The flip is stored
+  /// per-gateway; the cached catalog entry is updated in place so the
+  /// pickers tell the truth without waiting for a refetch.
+  /// Returns true when the gateway accepted the flip.
+  Future<bool> setModelVerified(String model, bool verified) async {
+    if (!connectivityOn) return false;
+    try {
+      final r = await http
+          .post(
+            Uri.parse('$_base/mesh/model-prefs'),
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode({'model': model, 'verified': verified}),
+          )
+          .timeout(const Duration(seconds: 10));
+      if (r.statusCode != 200) return false;
+      final seats = cachedSeats();
+      final i = seats.indexWhere((s) => s.model == model);
+      if (i >= 0) {
+        final s = seats[i];
+        seats[i] = MeshSeat(
+          model: s.model,
+          lane: s.lane,
+          group: s.group,
+          status: s.status,
+          available: s.available,
+          blocked: s.blocked,
+          unverifiedFlag: verified ? false : s.unverifiedFlag,
+          verifiedOverride: verified,
+        );
+        await _box.put(
+            'catalog_models', seats.map((s) => s.toMap()).toList());
+      }
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
   /// Stream a chat through the mesh. Yields content deltas only.
   /// Throws on HTTP errors so the chat seam can surface them honestly.
   Stream<String> streamChat({
@@ -182,8 +243,24 @@ class MeshService {
     });
     final resp = await client.send(req).timeout(const Duration(seconds: 30));
     if (resp.statusCode != 200) {
+      // Mesh 0.16+: the error body carries the real cause (seat
+      // unavailable + reason, or the upstream lane error). Surface it
+      // verbatim instead of a bare status code.
+      final body = await resp.stream.bytesToString();
       client.close();
-      throw Exception('Mesh answered HTTP ${resp.statusCode}');
+      String reason = '';
+      try {
+        final d = jsonDecode(body) as Map<String, dynamic>;
+        reason = d['error']?.toString() ?? '';
+      } catch (_) {}
+      if (reason.isEmpty) {
+        final t = body.trim();
+        reason = t.isEmpty
+            ? 'Mesh answered HTTP ${resp.statusCode}'
+            : 'Mesh answered HTTP ${resp.statusCode}: '
+                '${t.length > 180 ? t.substring(0, 180) : t}';
+      }
+      throw Exception(reason);
     }
     try {
       await for (final line in resp.stream

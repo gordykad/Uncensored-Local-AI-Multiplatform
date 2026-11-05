@@ -375,12 +375,17 @@ class _ModelLibraryBodyState extends State<_ModelLibraryBody> {
     required String badge,
     required Color badgeColor,
     required IconData icon,
+    VoidCallback? tapOverride,
+    VoidCallback? onLongPress,
+    bool dimmed = false,
   }) {
     final sel = ctrl.selectedRemote.value;
     final selected =
         sel != null && sel['kind'] == source['kind'] && sel['id'] == source['id'];
     return GestureDetector(
-      onTap: () {
+      onLongPress: onLongPress,
+      onTap: tapOverride ??
+          () {
         if (selected) {
           ctrl.clearRemote();
         } else {
@@ -420,12 +425,16 @@ class _ModelLibraryBodyState extends State<_ModelLibraryBody> {
                 children: [
                   Text(
                     title,
-                    style: TextStyle(fontSize: 13, color: context.text),
+                    style: TextStyle(
+                        fontSize: 13,
+                        color: dimmed ? context.textM : context.text),
                     overflow: TextOverflow.ellipsis,
                   ),
                   Text(
                     sub,
-                    style: TextStyle(fontSize: 11, color: context.textM),
+                    style: TextStyle(
+                        fontSize: 11,
+                        color: dimmed ? context.textD : context.textM),
                     overflow: TextOverflow.ellipsis,
                   ),
                 ],
@@ -548,15 +557,101 @@ class _ModelLibraryBodyState extends State<_ModelLibraryBody> {
             'model': s.model,
           },
           title: s.model,
-          sub: s.lane,
-          badge: s.proven ? 'PROVEN' : 'UNVERIFIED',
-          badgeColor: s.proven ? AppColors.green : context.textM,
+          sub: s.isBlocked && s.blocked != null
+              ? '${s.lane} - ${s.blocked}'
+              : s.lane,
+          badge: s.isBlocked
+              ? 'BLOCKED'
+              : s.isVerified
+                  ? (s.proven ? 'PROVEN' : 'VERIFIED')
+                  : 'SMOKE TEST',
+          badgeColor: s.isBlocked
+              ? AppColors.red
+              : s.isVerified
+                  ? AppColors.green
+                  : AppColors.orange,
           icon: Icons.hub_outlined,
+          dimmed: s.isBlocked,
+          tapOverride: s.isBlocked
+              ? () {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      backgroundColor: context.bgPanel,
+                      content: Text(
+                        s.blocked ?? 'Unavailable on this gateway',
+                        style: TextStyle(color: context.text),
+                      ),
+                    ),
+                  );
+                }
+              : null,
+          onLongPress: s.isBlocked || s.proven
+              ? null
+              : () => _seatVerifySheet(context, s),
         ));
       }
     }
     widgets.add(const SizedBox(height: 16));
     return widgets;
+  }
+
+  /// Mesh 0.17: Kai smoke-tests unverified seats by picking them;
+  /// when one earns it he flips it verified - the same flip the
+  /// console toggle makes (POST /mesh/model-prefs on the gateway).
+  void _seatVerifySheet(BuildContext context, MeshSeat s) {
+    final target = !s.verifiedOverride;
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: context.bgPanel,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (sheetCtx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: Icon(
+                target ? Icons.verified_outlined : Icons.undo_outlined,
+                color: context.textM,
+                size: 20,
+              ),
+              title: Text(
+                target ? 'Mark verified' : 'Unmark verified',
+                style: TextStyle(fontSize: 14, color: context.text),
+              ),
+              subtitle: Text(
+                s.model,
+                style: TextStyle(fontSize: 11, color: context.textM),
+              ),
+              onTap: () async {
+                Navigator.pop(sheetCtx);
+                final ok = await _meshSvc.setModelVerified(s.model, target);
+                if (!context.mounted) return;
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    backgroundColor: context.bgPanel,
+                    content: Text(
+                      ok
+                          ? (target
+                              ? '${s.model} marked verified'
+                              : '${s.model} unmarked')
+                          : 'The mesh did not accept the flip - is the PC gateway up?',
+                      style: TextStyle(color: context.text),
+                    ),
+                  ),
+                );
+                if (ok) {
+                  _meshSvc.fetchSeats().then((s) {
+                    if (mounted) setState(() => _meshSeats = s);
+                  });
+                }
+              },
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   List<Widget> _customSection(BuildContext context, ModelController ctrl) {

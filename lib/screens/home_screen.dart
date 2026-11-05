@@ -688,8 +688,19 @@ class _HomeScreenState extends State<HomeScreen> {
         addEntry(
           'Mesh',
           s.model,
-          '${s.lane} \u00b7 ${s.proven ? 'PROVEN' : 'UNVERIFIED'}',
+          s.isBlocked
+              ? (s.blocked ?? 'Unavailable on this gateway')
+              : '${s.lane} \u00b7 ${s.isVerified ? 'VERIFIED' : 'SMOKE TEST'}',
           () {
+            if (s.isBlocked) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content:
+                      Text(s.blocked ?? 'Unavailable on this gateway'),
+                ),
+              );
+              return;
+            }
             _modelCtrl.selectRemote({
               'kind': 'mesh',
               'id': 'mesh:${s.lane}:${s.model}',

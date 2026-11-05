@@ -70,6 +70,16 @@ class ChatController extends GetxController {
     }
   }
 
+  /// Delete EVERY chat - storage first, then memory. (The Settings
+  /// Danger Zone button used to clear the in-memory list only, so
+  /// every chat resurrected from Hive on the next launch. Kai caught
+  /// it 2026-11-04: "clear chat doesn't clear chat.")
+  Future<void> deleteAllChats() async {
+    await _storage.deleteAllChats();
+    chats.clear();
+    activeChatId.value = null;
+  }
+
   /// Send a user message and stream AI response.
   Future<void> sendMessage(String text, {String? modelFilename}) async {
     if (text.trim().isEmpty) return;
