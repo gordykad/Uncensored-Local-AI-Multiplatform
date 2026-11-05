@@ -1,7 +1,7 @@
 name: portable_ai_flutter
 description: "Portable AI — Run uncensored local LLMs natively on any device."
 publish_to: 'none'
-version: 1.15.0+41
+version: 1.16.0+42
 
 environment:
   sdk: ^3.11.4
@@ -27,6 +27,7 @@ dependencies:
   # ── File System ─────────────────────────────────────────────────
   path_provider: ^2.1.5            # App documents / downloads dir
   video_player: ^2.9.2             # Ticket 32: in-thread + gallery clip playback
+  webview_flutter: ^4.10.0         # Ticket 25: glass folder pack (Astro OS bridge)
   path: ^1.9.1                     # Path string utilities
   file_picker: ^8.1.7              # Cross-platform file/folder picker
 
@@ -63,3 +64,4 @@ flutter:
   assets:
     - assets/models_catalog.json
     - assets/icon/minix-icon.png
+    - assets/glass_folder_pack.html

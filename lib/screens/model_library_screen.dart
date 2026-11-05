@@ -14,6 +14,7 @@ import '../services/haptics.dart';
 import '../services/custom_connections_service.dart';
 import '../models/ai_model_info.dart';
 import '../widgets/model_card.dart';
+import '../widgets/glass_folder.dart';
 import '../widgets/faithful/gravity.dart';
 import '../widgets/faithful/trace_pickers.dart';
 import '../widgets/faithful/controls_meta.dart';
@@ -274,6 +275,46 @@ class _ModelLibraryBodyState extends State<_ModelLibraryBody> {
             return ListView(
               padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
               children: [
+                // ── Glass folder collections (ticket 25) ──
+                // The Astro OS pack, byte-identical, one folder per
+                // tag collection. Picking a file filters the list
+                // below to that model's card.
+                if (_filter == _Filter.all && _query.isEmpty) ...[
+                  _sectionTitle(context, 'Collections'),
+                  const SizedBox(height: 4),
+                  SizedBox(
+                    height: 350,
+                    child: PageView(
+                      controller: PageController(viewportFraction: 0.94),
+                      children: [
+                        for (final c in _collections(allCatalog))
+                          Padding(
+                            padding: const EdgeInsets.only(right: 8),
+                            child: GlassFolderPack(
+                              label: c.label,
+                              meta:
+                                  '${c.models.length} ${c.models.length == 1 ? 'model' : 'models'}',
+                              seed: 3 + c.index * 4,
+                              files: [
+                                for (final m in c.models)
+                                  (
+                                    name: m.name,
+                                    meta:
+                                        '${m.sizeGb} GB - ${_quantOf(m.filename)}',
+                                  ),
+                              ],
+                              onFileSelect: (idx) {
+                                if (idx < 0 || idx >= c.models.length) return;
+                                setState(() => _query = c.models[idx].name);
+                              },
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                ],
+
                 // ── Pinned for the fleet (ticket 30) ─────
                 if (_filter == _Filter.all && _query.isEmpty)
                   ..._pinnedSection(
@@ -363,6 +404,35 @@ class _ModelLibraryBodyState extends State<_ModelLibraryBody> {
         ),
       ],
     );
+  }
+
+  /// Ticket 25: folder collections — All Models plus one folder
+  /// per capability tag that has at least one model.
+  List<({String label, List<AiModelInfo> models, int index})> _collections(
+    List<AiModelInfo> all,
+  ) {
+    final out = <({String label, List<AiModelInfo> models, int index})>[
+      (label: 'All Models', models: all, index: 0),
+    ];
+    var i = 1;
+    for (final t in ModelClassifier.tagOrder) {
+      final models = all.where((m) => m.tags.contains(t)).toList();
+      if (models.isEmpty) continue;
+      out.add((
+        label: '${t[0].toUpperCase()}${t.substring(1)}',
+        models: models,
+        index: i++,
+      ));
+    }
+    return out;
+  }
+
+  static String _quantOf(String filename) {
+    final m = RegExp(
+      r'(IQ\d+(_[A-Z0-9]+)?|Q\d+(_K(_[SMLX]+)?|_\d+)?|F16|BF16|F32)',
+      caseSensitive: false,
+    ).firstMatch(filename);
+    return m?.group(0)?.toUpperCase() ?? 'GGUF';
   }
 
   List<Widget> _pinnedSection(
