@@ -35,13 +35,17 @@ class GenRecord {
   final int? seed;
   final String model;
   final int ts; // epoch ms
+  final String kind; // 'image' | 'video' (ticket 32)
   const GenRecord({
     required this.file,
     required this.prompt,
     this.seed,
     required this.model,
     required this.ts,
+    this.kind = 'image',
   });
+
+  bool get isVideo => kind == 'video';
 
   Map<String, dynamic> toMap() => {
         'file': file,
@@ -49,6 +53,7 @@ class GenRecord {
         'seed': seed,
         'model': model,
         'ts': ts,
+        'kind': kind,
       };
 
   factory GenRecord.fromMap(Map m) => GenRecord(
@@ -57,6 +62,7 @@ class GenRecord {
         seed: (m['seed'] as num?)?.toInt(),
         model: (m['model'] ?? '') as String,
         ts: ((m['ts'] ?? 0) as num).toInt(),
+        kind: (m['kind'] ?? 'image') as String,
       );
 }
 
@@ -105,16 +111,23 @@ class ImageGenService {
     required String prompt,
     int? seed,
     required String model,
+    String kind = 'image',
   }) async {
     try {
       final dir = await getApplicationDocumentsDirectory();
       final folder = Directory('${dir.path}/images');
       if (!await folder.exists()) await folder.create(recursive: true);
       final ts = DateTime.now().millisecondsSinceEpoch;
-      final f = File('${folder.path}/gen_$ts.png');
+      final f =
+          File('${folder.path}/gen_$ts.${kind == 'video' ? 'mp4' : 'png'}');
       await f.writeAsBytes(bytes);
       final rec = GenRecord(
-          file: f.path, prompt: prompt, seed: seed, model: model, ts: ts);
+          file: f.path,
+          prompt: prompt,
+          seed: seed,
+          model: model,
+          ts: ts,
+          kind: kind);
       final list = history()..insert(0, rec);
       // Cap the gallery at 200; evict the oldest files with them.
       while (list.length > 200) {
@@ -268,7 +281,8 @@ class ImageGenService {
 
   /// Add-time validation. Returns an error string, or the resolved gradio
   /// endpoint path for owner entries.
-  Future<(String?, String, int)> validate(String lane, String link) async {
+  Future<(String?, String, int)> validate(String lane, String link,
+      {String kind = 'image'}) async {
     link = normalizeLink(lane, link);
     if (lane == 'runpod') {
       try {
@@ -297,6 +311,14 @@ class ImageGenService {
         final hasCheckpoint = sibs.any((f) =>
             f.endsWith('.safetensors') &&
             !skipPrefixes.any((p) => f.startsWith(p)));
+        if (kind == 'video') {
+          // Ticket 32: a video entry's link is a LoRA repo - any
+          // .safetensors in it qualifies, wherever it sits.
+          if (!sibs.any((f) => f.endsWith('.safetensors'))) {
+            return ('That repo has no .safetensors LoRA in it', '', 0);
+          }
+          return (null, '', 0);
+        }
         if (!hasGguf && !hasCheckpoint) {
           return ('That repo has no .gguf model and no standalone '
               '.safetensors checkpoint in it', '', 0);
@@ -522,5 +544,87 @@ class ImageGenService {
       }
     }
     throw Exception('RunPod job timed out after 10 minutes');
+  }
+
+  /// Ticket 32: video generation on the same RunPod endpoint. The
+  /// entry's link is the LoRA repo (the Wan 2.2 base stack is fixed
+  /// on the worker). With [imageBytes] the job runs image-to-video
+  /// (animate a still); without, text-to-video. Poll window is 30
+  /// minutes: a cold flavor download plus a render is a long job,
+  /// and the app must not give up on a job the server completes.
+  Future<ImageGenResult> generateRunpodVideo(
+    ImageEntry e, {
+    required String prompt,
+    List<int>? imageBytes,
+    int width = 832,
+    int height = 480,
+    void Function(String phase)? onPhase,
+  }) async {
+    if (!runpodReady) {
+      throw Exception(
+          'Add your RunPod endpoint ID and API key in Image Gen settings first');
+    }
+    final headers = {
+      'Content-Type': 'application/json',
+      'Authorization': 'Bearer $runpodKey',
+    };
+    onPhase?.call('Waking your endpoint');
+    final run = await http
+        .post(
+          Uri.parse('https://api.runpod.ai/v2/$runpodEndpoint/run'),
+          headers: headers,
+          body: jsonEncode({
+            'input': {
+              'kind': 'video',
+              'prompt': prompt,
+              if (imageBytes != null) 'image': base64Encode(imageBytes),
+              'width': width,
+              'height': height,
+              'frames': 81,
+              'seed': 0,
+              'lora': normalizeRepoLink(e.link),
+            },
+          }),
+        )
+        .timeout(const Duration(seconds: 60));
+    if (run.statusCode != 200) {
+      throw Exception('RunPod answered HTTP ${run.statusCode}');
+    }
+    final jobId = (jsonDecode(run.body) as Map<String, dynamic>)['id'];
+    if (jobId == null) throw Exception('RunPod returned no job id');
+
+    final deadline = DateTime.now().add(const Duration(minutes: 30));
+    while (DateTime.now().isBefore(deadline)) {
+      await Future.delayed(const Duration(seconds: 4));
+      final st = await http
+          .get(
+            Uri.parse('https://api.runpod.ai/v2/$runpodEndpoint/status/$jobId'),
+            headers: headers,
+          )
+          .timeout(const Duration(seconds: 30));
+      if (st.statusCode != 200) continue;
+      final d = jsonDecode(st.body) as Map<String, dynamic>;
+      switch (d['status']) {
+        case 'IN_QUEUE':
+          onPhase?.call('In queue');
+        case 'IN_PROGRESS':
+          onPhase?.call(
+              imageBytes != null ? 'Animating on your GPU' : 'Filming on your GPU');
+        case 'COMPLETED':
+          final out = d['output'] as Map<String, dynamic>?;
+          if (out == null) throw Exception('RunPod finished with no output');
+          final vids = out['videos'] as List?;
+          if (vids != null && vids.isNotEmpty) {
+            return ImageGenResult(base64Decode(vids[0].toString()),
+                (out['seed'] as num?)?.toInt());
+          }
+          throw Exception('RunPod output had no video');
+        case 'FAILED':
+          throw Exception('RunPod job failed: ${d['error'] ?? 'unknown error'}');
+        case 'CANCELLED':
+          throw Exception('RunPod job was cancelled');
+      }
+    }
+    throw Exception('RunPod video job timed out after 30 minutes');
   }
 }

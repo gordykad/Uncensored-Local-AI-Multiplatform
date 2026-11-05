@@ -12,6 +12,11 @@ class ImageEntry {
   final bool pinned;
   final bool remote; // came from the shared config (pinned by Kai)
   final int createdMs;
+  // Ticket 32: 'image' | 'video'. Video entries are RunPod-only; for
+  // them the link is the LoRA repo (the Wan 2.2 base stack is fixed
+  // infrastructure on the worker, not a per-entry model).
+  final String kind;
+  final String lora; // optional extra LoRA ref for image entries
 
   const ImageEntry({
     required this.id,
@@ -23,9 +28,12 @@ class ImageEntry {
     this.pinned = false,
     this.remote = false,
     required this.createdMs,
+    this.kind = 'image',
+    this.lora = '',
   });
 
   bool get isRunpod => lane == 'runpod';
+  bool get isVideo => kind == 'video';
 
   // Gradio API host for owner entries: a huggingface.co/spaces/<u>/<n> page
   // URL maps to https://<u>-<n>.hf.space; a direct *.hf.space URL passes.
@@ -52,6 +60,8 @@ class ImageEntry {
         'fnIndex': fnIndex,
         'pinned': pinned,
         'createdMs': createdMs,
+        'kind': kind,
+        'lora': lora,
       };
 
   factory ImageEntry.fromMap(Map m, {bool remote = false}) => ImageEntry(
@@ -64,6 +74,8 @@ class ImageEntry {
         pinned: m['pinned'] == true,
         remote: remote,
         createdMs: (m['createdMs'] as num?)?.toInt() ?? 0,
+        kind: m['kind']?.toString() ?? 'image',
+        lora: m['lora']?.toString() ?? '',
       );
 
   ImageEntry copyWith({bool? pinned}) => ImageEntry(
@@ -75,5 +87,7 @@ class ImageEntry {
         pinned: pinned ?? this.pinned,
         remote: remote,
         createdMs: createdMs,
+        kind: kind,
+        lora: lora,
       );
 }

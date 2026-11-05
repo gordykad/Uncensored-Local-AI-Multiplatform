@@ -1,7 +1,7 @@
 name: portable_ai_flutter
 description: "Portable AI — Run uncensored local LLMs natively on any device."
 publish_to: 'none'
-version: 1.10.4+31
+version: 1.11.0+32
 
 environment:
   sdk: ^3.11.4
@@ -26,6 +26,7 @@ dependencies:
 
   # ── File System ─────────────────────────────────────────────────
   path_provider: ^2.1.5            # App documents / downloads dir
+  video_player: ^2.9.2             # Ticket 32: in-thread + gallery clip playback
   path: ^1.9.1                     # Path string utilities
   file_picker: ^8.1.7              # Cross-platform file/folder picker
 

@@ -2,11 +2,13 @@
 // generated (Kai, 2026-11-04). Generations persist at completion
 // (ImageGenService.recordGeneration): PNG in app files + a
 // GenRecord index in the 'imagegen' Hive box. Local files only -
-// the gallery works with Connectivity off.
+// the gallery works with Connectivity off. Ticket 32: clips live
+// here too (kind 'video', mp4 files, playable in the viewer).
 import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
+import 'package:video_player/video_player.dart';
 
 import '../services/image_gen_service.dart';
 import '../theme/app_colors.dart';
@@ -111,19 +113,106 @@ class _GenGalleryScreenState extends State<GenGalleryScreen> {
           onTap: () => Get.to(() => _GenViewer(rec: rec, svc: _svc)),
           child: ClipRRect(
             borderRadius: BorderRadius.circular(8),
-            child: Image.file(
-              File(rec.file),
-              fit: BoxFit.cover,
-              cacheWidth: 360,
-              errorBuilder: (_, __, ___) => Container(
-                color: AppColors.darkBgPanel,
-                child: const Icon(Icons.broken_image_outlined,
-                    color: AppColors.darkTextD, size: 22),
-              ),
-            ),
+            child: rec.isVideo
+                ? Container(
+                    color: AppColors.darkBgPanel,
+                    child: const Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(Icons.play_circle_outline_rounded,
+                              color: AppColors.accentHi, size: 30),
+                          SizedBox(height: 4),
+                          Text('VIDEO',
+                              style: TextStyle(
+                                  color: AppColors.darkTextD,
+                                  fontSize: 9,
+                                  letterSpacing: 1.2)),
+                        ]),
+                  )
+                : Image.file(
+                    File(rec.file),
+                    fit: BoxFit.cover,
+                    cacheWidth: 360,
+                    errorBuilder: (_, __, ___) => Container(
+                      color: AppColors.darkBgPanel,
+                      child: const Icon(Icons.broken_image_outlined,
+                          color: AppColors.darkTextD, size: 22),
+                    ),
+                  ),
           ),
         );
       },
+    );
+  }
+}
+
+/// Full-view clip player (ticket 32): autoplays, loops, tap toggles.
+class _ClipView extends StatefulWidget {
+  final String path;
+  const _ClipView({required this.path});
+
+  @override
+  State<_ClipView> createState() => _ClipViewState();
+}
+
+class _ClipViewState extends State<_ClipView> {
+  VideoPlayerController? _ctl;
+  bool _ready = false;
+
+  @override
+  void initState() {
+    super.initState();
+    final c = VideoPlayerController.file(File(widget.path));
+    _ctl = c;
+    c.initialize().then((_) {
+      if (!mounted) return;
+      c.setLooping(true);
+      c.play();
+      setState(() => _ready = true);
+    }).catchError((_) {});
+  }
+
+  @override
+  void dispose() {
+    _ctl?.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final c = _ctl;
+    if (!_ready || c == null) {
+      return const AspectRatio(
+        aspectRatio: 832 / 480,
+        child: Center(
+          child: SizedBox(
+            width: 18,
+            height: 18,
+            child: CircularProgressIndicator(
+                strokeWidth: 2, color: AppColors.accentHi),
+          ),
+        ),
+      );
+    }
+    return GestureDetector(
+      onTap: () => setState(() => c.value.isPlaying ? c.pause() : c.play()),
+      child: AspectRatio(
+        aspectRatio: c.value.aspectRatio,
+        child: Stack(alignment: Alignment.center, children: [
+          VideoPlayer(c),
+          if (!c.value.isPlaying)
+            Container(
+              width: 54,
+              height: 54,
+              decoration: const BoxDecoration(
+                shape: BoxShape.circle,
+                color: Color(0x99000000),
+              ),
+              child: const Icon(Icons.play_arrow_rounded,
+                  color: Colors.white, size: 30),
+            ),
+        ]),
+      ),
     );
   }
 }
@@ -185,8 +274,10 @@ class _GenViewer extends StatelessWidget {
                     children: [
                       ClipRRect(
                         borderRadius: BorderRadius.circular(14),
-                        child: Image.file(File(rec.file),
-                            fit: BoxFit.cover, width: double.infinity),
+                        child: rec.isVideo
+                            ? _ClipView(path: rec.file)
+                            : Image.file(File(rec.file),
+                                fit: BoxFit.cover, width: double.infinity),
                       ),
                       const SizedBox(height: 14),
                       Text(rec.prompt,

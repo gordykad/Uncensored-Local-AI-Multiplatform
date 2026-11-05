@@ -17,6 +17,8 @@ import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:path_provider/path_provider.dart';
 
+import 'package:video_player/video_player.dart';
+
 import '../models/image_entry.dart';
 import '../services/image_gen_service.dart';
 import '../services/log_service.dart';
@@ -30,6 +32,10 @@ class _Item {
   List<int>? bytes;
   int? seed;
   String? error;
+  // Ticket 32: video items carry a persisted file path (the mp4 in
+  // the gallery store) instead of in-memory bytes.
+  bool isVideo = false;
+  String? videoPath;
   _Item(this.prompt)
       : status = 'pending',
         phase = 'Starting';
@@ -130,6 +136,10 @@ class _ImageGenScreenState extends State<ImageGenScreen>
       _toast('Connectivity is off - this tab is disabled');
       return;
     }
+    if (entry.isVideo) {
+      await _generateVideo(entry, prompt.trim());
+      return;
+    }
     final item = _Item(prompt.trim());
     setState(() {
       _busy = true;
@@ -167,6 +177,65 @@ class _ImageGenScreenState extends State<ImageGenScreen>
       });
       _scrollDown();
     }
+  }
+
+  /// Ticket 32: run a video job (text-to-video, or image-to-video
+  /// when [imageBytes] carries a still to animate).
+  Future<void> _generateVideo(ImageEntry entry, String prompt,
+      {List<int>? imageBytes}) async {
+    if (_busy || prompt.trim().isEmpty) return;
+    if (!_online) {
+      _toast('Connectivity is off - this tab is disabled');
+      return;
+    }
+    final item = _Item(prompt.trim())..isVideo = true;
+    setState(() {
+      _busy = true;
+      _phase = 'Starting';
+      _items.add(item);
+    });
+    _scrollDown();
+    try {
+      final result = await _svc.generateRunpodVideo(entry,
+          prompt: item.prompt,
+          imageBytes: imageBytes,
+          onPhase: (p) => _setPhase(item, p));
+      // Persist first: the player reads the gallery file.
+      final rec = await _svc.recordGeneration(
+        bytes: result.bytes,
+        prompt: item.prompt,
+        seed: result.seed,
+        model: entry.name,
+        kind: 'video',
+      );
+      if (rec == null) throw Exception('Could not save the clip');
+      item.videoPath = rec.file;
+      item.seed = result.seed;
+      item.status = 'done';
+    } catch (e) {
+      item.status = 'error';
+      item.error = e.toString().replaceFirst('Exception: ', '');
+    }
+    if (mounted) {
+      setState(() {
+        _busy = false;
+        _phase = '';
+      });
+      _scrollDown();
+    }
+  }
+
+  /// Animate a finished still with the selected (or first) video
+  /// entry - the image-to-video half of ticket 32.
+  void _animate(_Item src) {
+    if (src.bytes == null || _busy) return;
+    final vids = _entries.where((e) => e.isVideo).toList();
+    if (vids.isEmpty) {
+      _toast('Add a video entry first - RunPod lane, Video kind');
+      return;
+    }
+    final entry = (_current?.isVideo ?? false) ? _current! : vids.first;
+    _generateVideo(entry, src.prompt, imageBytes: src.bytes);
   }
 
   void _setPhase(_Item item, String p) {
@@ -411,6 +480,16 @@ class _ImageGenScreenState extends State<ImageGenScreen>
                 style: const TextStyle(
                     color: AppColors.red, fontSize: 13, height: 1.45)),
           )
+        else if (item.isVideo && item.videoPath != null)
+          Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            _VideoTile(path: item.videoPath!),
+            const SizedBox(height: 6),
+            Text(
+              '832 x 480 - video${item.seed != null ? ' - seed ${item.seed}' : ''}',
+              style: const TextStyle(
+                  color: AppColors.darkTextD, fontSize: 11.5),
+            ),
+          ])
         else
           Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
             ClipRRect(
@@ -436,6 +515,12 @@ class _ImageGenScreenState extends State<ImageGenScreen>
                 child: const Text('Save',
                     style: TextStyle(color: AppColors.accentHi, fontSize: 12.5)),
               ),
+              if (_entries.any((e) => e.isVideo))
+                TextButton(
+                  onPressed: _busy ? null : () => _animate(item),
+                  child: const Text('Animate',
+                      style: TextStyle(color: AppColors.accentHi, fontSize: 12.5)),
+                ),
               TextButton(
                 onPressed: _busy ? null : () => _generate('${item.prompt} '),
                 child: const Text('Re-roll',
@@ -627,9 +712,11 @@ class _ImageGenScreenState extends State<ImageGenScreen>
                   style: const TextStyle(
                       color: AppColors.darkText, fontSize: 13.5)),
               subtitle: Text(
-                e.isRunpod
-                    ? 'RunPod - your endpoint only'
-                    : (e.remote ? 'Hosted - pinned by you' : 'Hosted'),
+                e.isVideo
+                    ? 'RunPod video - your endpoint only'
+                    : e.isRunpod
+                        ? 'RunPod - your endpoint only'
+                        : (e.remote ? 'Hosted - pinned by you' : 'Hosted'),
                 style: const TextStyle(
                     color: AppColors.darkTextD, fontSize: 11.5),
               ),
@@ -736,6 +823,7 @@ class _ImageGenScreenState extends State<ImageGenScreen>
     final name = TextEditingController();
     final link = TextEditingController();
     var lane = 'owner';
+    var kind = 'image';
     var checking = false;
     String? error;
     showModalBottomSheet(
@@ -771,6 +859,22 @@ class _ImageGenScreenState extends State<ImageGenScreen>
                 textStyle: WidgetStatePropertyAll(TextStyle(fontSize: 12.5)),
               ),
             ),
+            if (lane == 'runpod') ...[
+              const SizedBox(height: 10),
+              SegmentedButton<String>(
+                segments: const [
+                  ButtonSegment(value: 'image', label: Text('Image')),
+                  ButtonSegment(value: 'video', label: Text('Video')),
+                ],
+                selected: {kind},
+                onSelectionChanged: (s) => setSheet(() => kind = s.first),
+                style: const ButtonStyle(
+                  visualDensity: VisualDensity.compact,
+                  textStyle:
+                      WidgetStatePropertyAll(TextStyle(fontSize: 12.5)),
+                ),
+              ),
+            ],
             const SizedBox(height: 12),
             TextField(
               controller: name,
@@ -788,9 +892,11 @@ class _ImageGenScreenState extends State<ImageGenScreen>
               controller: link,
               style: const TextStyle(color: AppColors.darkText, fontSize: 14),
               decoration: InputDecoration(
-                labelText: lane == 'runpod'
-                    ? 'HF repo - paste the full link or user/model'
-                    : 'Space - paste the full link or user/space',
+                labelText: lane != 'runpod'
+                    ? 'Space - paste the full link or user/space'
+                    : kind == 'video'
+                        ? 'LoRA repo - HF link (the Wan base is built in)'
+                        : 'HF repo - paste the full link or user/model',
                 labelStyle:
                     const TextStyle(color: AppColors.darkTextM, fontSize: 13),
                 enabledBorder: const UnderlineInputBorder(
@@ -831,8 +937,9 @@ class _ImageGenScreenState extends State<ImageGenScreen>
                           checking = true;
                           error = null;
                         });
-                        final (err, endpoint, fnIndex) =
-                            await _svc.validate(lane, link.text.trim());
+                        final (err, endpoint, fnIndex) = await _svc.validate(
+                            lane, link.text.trim(),
+                            kind: lane == 'runpod' ? kind : 'image');
                         if (err != null) {
                           setSheet(() {
                             checking = false;
@@ -849,6 +956,7 @@ class _ImageGenScreenState extends State<ImageGenScreen>
                           endpoint: endpoint.isEmpty ? '/generate' : endpoint,
                           fnIndex: fnIndex,
                           createdMs: DateTime.now().millisecondsSinceEpoch,
+                          kind: lane == 'runpod' ? kind : 'image',
                         );
                         _svc.addEntry(e);
                         if (!mounted) return;
@@ -945,6 +1053,80 @@ class _ImageGenScreenState extends State<ImageGenScreen>
 
 // Magic UI Border Beam mechanics: a 50px comet (gradient #ffaa40 -> #9c40ff
 // -> transparent) travels the rounded-rect perimeter on a 6s linear loop.
+/// Ticket 32: an inline clip player for a finished video item.
+/// Owns its controller; loops; tap toggles play/pause.
+class _VideoTile extends StatefulWidget {
+  final String path;
+  const _VideoTile({required this.path});
+
+  @override
+  State<_VideoTile> createState() => _VideoTileState();
+}
+
+class _VideoTileState extends State<_VideoTile> {
+  VideoPlayerController? _ctl;
+  bool _ready = false;
+
+  @override
+  void initState() {
+    super.initState();
+    final c = VideoPlayerController.file(File(widget.path));
+    _ctl = c;
+    c.initialize().then((_) {
+      if (!mounted) return;
+      c.setLooping(true);
+      setState(() => _ready = true);
+    }).catchError((_) {});
+  }
+
+  @override
+  void dispose() {
+    _ctl?.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final c = _ctl;
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(14),
+      child: AspectRatio(
+        aspectRatio: 832 / 480,
+        child: Container(
+          color: AppColors.darkBgPanel,
+          child: (!_ready || c == null)
+              ? const Center(
+                  child: SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(
+                        strokeWidth: 2, color: AppColors.accentHi),
+                  ),
+                )
+              : GestureDetector(
+                  onTap: () =>
+                      setState(() => c.value.isPlaying ? c.pause() : c.play()),
+                  child: Stack(alignment: Alignment.center, children: [
+                    VideoPlayer(c),
+                    if (!c.value.isPlaying)
+                      Container(
+                        width: 54,
+                        height: 54,
+                        decoration: const BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: Color(0x99000000),
+                        ),
+                        child: const Icon(Icons.play_arrow_rounded,
+                            color: Colors.white, size: 30),
+                      ),
+                  ]),
+                ),
+        ),
+      ),
+    );
+  }
+}
+
 class _BeamPainter extends CustomPainter {
   final double t;
   const _BeamPainter(this.t);
