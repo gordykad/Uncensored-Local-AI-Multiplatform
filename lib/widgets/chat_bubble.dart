@@ -6,7 +6,6 @@ import 'package:get/get.dart';
 import '../theme/app_colors.dart';
 import '../models/message_model.dart';
 import '../services/llm_service.dart';
-import 'faithful/orb.dart';
 import 'faithful/stream.dart';
 import 'faithful/widgets.dart';
 
@@ -95,21 +94,16 @@ class ChatBubble extends StatelessWidget {
     }
 
     // AI: while streaming, the Stream Reply port owns the text (#26;
-    // #2 progressive style when regenerating). Prefill = orb + shimmer.
+    // #2 progressive style when regenerating). Prefill = shimmer text
+    // only — the MorphOrb at center stage is the generation indicator
+    // now (Kai, 2026-11-05: the bubble's own orb overlapped it).
     if (isStreaming) {
       if (message.content.isEmpty) {
         return Padding(
           padding: const EdgeInsets.only(top: 3),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const ThinkingOrb(size: 120, thinking: true),
-              const SizedBox(height: 6),
-              TextShimmerWave(
-                text: 'Generating',
-                style: TextStyle(fontSize: 14, color: context.textM),
-              ),
-            ],
+          child: TextShimmerWave(
+            text: 'Generating',
+            style: TextStyle(fontSize: 14, color: context.textM),
           ),
         );
       }
