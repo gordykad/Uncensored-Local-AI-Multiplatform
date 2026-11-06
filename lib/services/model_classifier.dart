@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -49,7 +50,10 @@ class _Reader {
 
   String str() {
     final len = u64();
-    final s = String.fromCharCodes(bytes.sublist(pos, pos + len));
+    if (len < 0 || pos + len > bytes.length) {
+      throw const FormatException('gguf string overruns the read window');
+    }
+    final s = utf8.decode(bytes.sublist(pos, pos + len), allowMalformed: true);
     pos += len;
     return s;
   }
@@ -73,8 +77,35 @@ class _Reader {
       case 9: // array
         final elemType = u32();
         final count = u64();
-        for (var i = 0; i < count; i++) {
-          skipValue(elemType);
+        // Corrupt counts must not loop (near-)forever or run off
+        // the read window (Claude audit). Fixed-size elements skip
+        // in O(1); strings recurse with the same bounds checks.
+        if (count < 0 || count > 100000000) {
+          throw const FormatException('gguf array count out of range');
+        }
+        const stride = {
+          0: 1,
+          1: 1,
+          7: 1,
+          2: 2,
+          3: 2,
+          4: 4,
+          5: 4,
+          6: 4,
+          10: 8,
+          11: 8,
+          12: 8,
+        };
+        final st = stride[elemType];
+        if (st != null) {
+          pos += st * count;
+          if (pos > bytes.length) {
+            throw const FormatException('gguf array overruns the read window');
+          }
+        } else {
+          for (var i = 0; i < count; i++) {
+            skipValue(elemType);
+          }
         }
       case 10: // u64
       case 11: // i64
@@ -171,23 +202,35 @@ Future<GgufHeader?> readGgufHeader(File file) async {
     String? arch;
     int? ctx;
     int? experts;
-    for (var i = 0; i < kvCount; i++) {
-      final key = r.str();
-      final type = r.u32();
-      final wanted =
-          key == 'general.name' ||
-          key == 'general.architecture' ||
-          key.endsWith('.context_length') ||
-          key.endsWith('.expert_count');
-      if (!wanted) {
-        r.skipValue(type);
-        continue;
+    try {
+      for (var i = 0; i < kvCount; i++) {
+        final key = r.str();
+        final type = r.u32();
+        final wanted =
+            key == 'general.name' ||
+            key == 'general.architecture' ||
+            key.endsWith('.context_length') ||
+            key.endsWith('.expert_count');
+        if (!wanted) {
+          r.skipValue(type);
+          continue;
+        }
+        final v = r.readValue(type);
+        if (key == 'general.name' && v is String) name = v;
+        if (key == 'general.architecture' && v is String) arch = v;
+        if (key.endsWith('.context_length') && v is num) ctx = v.toInt();
+        if (key.endsWith('.expert_count') && v is num) experts = v.toInt();
+        // Everything wanted is in hand; the rest of the KV block
+        // (large vocabularies push it past the 4 MB window) is
+        // not worth another byte.
+        if (name != null && arch != null && ctx != null && experts != null) {
+          break;
+        }
       }
-      final v = r.readValue(type);
-      if (key == 'general.name' && v is String) name = v;
-      if (key == 'general.architecture' && v is String) arch = v;
-      if (key.endsWith('.context_length') && v is num) ctx = v.toInt();
-      if (key.endsWith('.expert_count') && v is num) experts = v.toInt();
+    } catch (_) {
+      // A surprise mid-walk keeps whatever was already parsed
+      // instead of discarding the whole header (Claude audit).
+      if (name == null && arch == null) rethrow;
     }
     return GgufHeader(
       name: name,
@@ -256,7 +299,9 @@ class ModelClassifier {
     ])) {
       tags.add('uncensored');
     }
-    if (has(['coder', 'code'])) tags.add('code');
+    if (has(['coder', 'code-', 'code_', '-code', '_code', ' code '])) {
+      tags.add('code');
+    }
     if (hasMmproj ||
         has([
           '-vl',
@@ -269,7 +314,17 @@ class ModelClassifier {
         ])) {
       tags.add('vision');
     }
-    if (has(['r1', 'thinking', 'reasoner', 'reasoning', 'qwq'])) {
+    if (has([
+      '-r1',
+      '_r1',
+      ' r1',
+      'r1-',
+      'deepseek-r1',
+      'thinking',
+      'reasoner',
+      'reasoning',
+      'qwq',
+    ])) {
       tags.add('reasoning');
     }
     // MoE: the header's expert_count is the ground truth; the
@@ -282,10 +337,10 @@ class ModelClassifier {
     if (has(['instruct', '-it', '_it', ' it ', 'chat', 'assistant'])) {
       tags.add('chat');
     }
-    if (tags.isEmpty ||
-        (!tags.contains('chat') && !has(['instruct', '-it', 'chat']))) {
-      if (!tags.contains('chat')) tags.add('base');
-    }
+    // 'base' means nothing else matched - a tuned model that
+    // merely lacks the literal word 'chat' in its name is not a
+    // base model (Claude audit: Dolphin got uncensored + base).
+    if (tags.isEmpty) tags.add('base');
     return tagOrder.where(tags.contains).toList();
   }
 
@@ -306,7 +361,11 @@ class ModelClassifier {
     return model.copyWith(
       name: cleanName(ggufName: header?.name, filename: model.filename),
       tags: tags,
-      label: tags.contains('uncensored') ? 'UNCENSORED' : model.label,
+      // A custom record's label is its persistence key (isCustom)
+      // and never changes; catalog records sync as before.
+      label: model.isCustom
+          ? model.label
+          : (tags.contains('uncensored') ? 'UNCENSORED' : model.label),
     );
   }
 }

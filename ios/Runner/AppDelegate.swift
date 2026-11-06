@@ -14,6 +14,9 @@ import UserNotifications
     // system relaunch for background-session events — so its session
     // reattaches to any transfers the daemon kept running (ticket 05).
     _ = MiniXDownloads.shared
+    // Ticket 23: clear any Live Activity the previous process
+    // left behind; live transfers recreate theirs on progress.
+    MiniXLiveActivity.shared.endAllStale()
     return super.application(application, didFinishLaunchingWithOptions: launchOptions)
   }
 

@@ -33,6 +33,7 @@ class ModelManager extends GetxService {
     _modelsDir = await _getModelsDir();
     await _loadCatalog();
     await scanDownloaded();
+    _adoptOrphanFiles();
     if (Platform.isIOS) await _adoptBackgroundDownloads();
     // Ticket 25: one-time classification pass over the existing
     // library (untagged custom records only), off the startup path.
@@ -120,6 +121,40 @@ class ModelManager extends GetxService {
         }
       }
     } catch (_) {}
+  }
+
+  /// Register any .gguf on disk that has no catalog record as a
+  /// custom model. Heals the records the 1.15 label bug dropped
+  /// (file present, record gone) and adopts files copied in by
+  /// hand. Runs after the catalog + custom load, before the
+  /// classification pass, so adoptees get classified too.
+  void _adoptOrphanFiles() {
+    var adopted = false;
+    for (final filename in downloadedModels) {
+      if (catalog.any((m) => m.filename == filename)) continue;
+      var sizeGb = 0.0;
+      try {
+        sizeGb = File(p.join(_modelsDir, filename)).lengthSync() / 1073741824;
+      } catch (_) {}
+      catalog.add(
+        AiModelInfo(
+          id: 'custom_adopted_$filename',
+          name: filename.replaceAll(
+            RegExp(r'\.gguf$', caseSensitive: false),
+            '',
+          ),
+          filename: filename,
+          url: 'local',
+          sizeGb: sizeGb,
+          minRamGb: 0,
+          label: 'CUSTOM',
+          badge: 'LOCAL',
+          systemPrompt: 'You are a helpful AI assistant.',
+        ),
+      );
+      adopted = true;
+    }
+    if (adopted) _persistCustomModels();
   }
 
   /// Scan the models directory for downloaded .gguf files.
@@ -267,8 +302,14 @@ class ModelManager extends GetxService {
     String? error;
     if (status == 'completed') {
       await scanDownloaded();
+      // Models added by link classify at add time, when the file
+      // does not exist yet; the header refine belongs here.
+      unawaited(refineCustomModel(filename));
     } else if (status == 'failed') {
       error = (st['error'] as String?) ?? 'Download failed';
+    } else {
+      // Vanished (external cancel, task purged): never a success.
+      error = 'Download did not complete';
     }
     if (state != null) state.isActive = false;
     activeDownloads.remove(filename);
@@ -419,7 +460,7 @@ class ModelManager extends GetxService {
       activeDownloads.remove(filename);
       _notifyUI();
       final done = _bgDone.remove(filename);
-      done?.call(null);
+      done?.call('Download cancelled');
       return;
     }
     if (activeDownloads.containsKey(filename)) {
@@ -590,6 +631,12 @@ class ModelManager extends GetxService {
     final file = File(p.join(_modelsDir, filename));
     if (!await file.exists()) return;
     final header = await readGgufHeader(file);
+    // The awaits above and below can interleave with a manual
+    // tag filing; re-read the record before writing anything.
+    final freshIdx = catalog.indexWhere((m) => m.filename == filename);
+    if (freshIdx == -1) return;
+    final fresh = catalog[freshIdx];
+    if (!fresh.isCustom || fresh.tagsSource == 'manual') return;
     var hasMmproj = false;
     try {
       final stem = filename
@@ -599,7 +646,9 @@ class ModelManager extends GetxService {
         if (f is File) {
           final b = p.basename(f.path).toLowerCase();
           if (b.contains('mmproj') &&
-              stem.startsWith(b.split('-mmproj').first)) {
+              (b.startsWith('mmproj') ||
+                  stem.startsWith(b.split('-mmproj').first) ||
+                  b.startsWith(stem))) {
             hasMmproj = true;
             break;
           }
@@ -607,14 +656,14 @@ class ModelManager extends GetxService {
       }
     } catch (_) {}
     final refined = ModelClassifier.apply(
-      model,
+      fresh,
       header: header,
       hasMmproj: hasMmproj,
     );
-    if (refined.name != model.name ||
-        refined.tags.join() != model.tags.join() ||
-        refined.label != model.label) {
-      catalog[idx] = refined;
+    if (refined.name != fresh.name ||
+        refined.tags.join() != fresh.tags.join() ||
+        refined.label != fresh.label) {
+      catalog[freshIdx] = refined;
       _persistCustomModels();
       _notifyUI();
     }
@@ -640,11 +689,12 @@ class ModelManager extends GetxService {
     final updated = model.copyWith(
       tags: tags,
       tagsSource: 'manual',
-      label: tags.contains('uncensored')
-          ? 'UNCENSORED'
-          : (model.label == 'UNCENSORED'
-                ? (model.isCustom ? 'CUSTOM' : 'STANDARD')
-                : model.label),
+      // Custom labels are persistence keys; they never move.
+      label: model.isCustom
+          ? model.label
+          : (tags.contains('uncensored')
+                ? 'UNCENSORED'
+                : (model.label == 'UNCENSORED' ? 'STANDARD' : model.label)),
     );
     if (model.isCustom) {
       updateCustomModel(updated);

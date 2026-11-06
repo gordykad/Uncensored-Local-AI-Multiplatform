@@ -58,6 +58,12 @@ class _ModelLibraryBody extends StatefulWidget {
 
 class _ModelLibraryBodyState extends State<_ModelLibraryBody> {
   _Filter _filter = _Filter.all;
+  // Claude audit: a PageController built inside the builder
+  // resets the Collections carousel to page one on every rebuild
+  // (rebuilds fire every second during a download). It lives in
+  // state and dies with it.
+  final _collectionsPager = PageController(viewportFraction: 0.94);
+
   // Ticket 30: fleet pins (config-fetched) + founder pin flags.
   final _pinsSvc = ModelPinsService();
   List<AiModelInfo> _pinned = [];
@@ -105,6 +111,7 @@ class _ModelLibraryBodyState extends State<_ModelLibraryBody> {
   void dispose() {
     _wakePoll?.cancel();
     _searchCtrl.dispose();
+    _collectionsPager.dispose();
     super.dispose();
   }
 
@@ -292,7 +299,7 @@ class _ModelLibraryBodyState extends State<_ModelLibraryBody> {
                       builder: (context) {
                         final cols = _collections(allCatalog);
                         return PageView.builder(
-                          controller: PageController(viewportFraction: 0.94),
+                          controller: _collectionsPager,
                           itemCount: cols.length,
                           itemBuilder: (context, i) {
                             final c = cols[i];

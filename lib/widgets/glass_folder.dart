@@ -117,7 +117,16 @@ class _GlassFolderPackState extends State<GlassFolderPack> {
   @override
   void didUpdateWidget(GlassFolderPack old) {
     super.didUpdateWidget(old);
-    if (old.label != widget.label || old.files.length != widget.files.length) {
+    // Names, not just count: a rename or re-tag at the same count
+    // otherwise leaves the pack showing a stale order, and a tap
+    // lands on the wrong model (Claude audit).
+    final namesChanged =
+        old.files.length != widget.files.length ||
+        !List.generate(
+          old.files.length,
+          (i) => old.files[i].name == widget.files[i].name,
+        ).every((e) => e);
+    if (old.label != widget.label || namesChanged) {
       _sendProps();
     }
   }

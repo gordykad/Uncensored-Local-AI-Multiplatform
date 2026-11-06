@@ -96,7 +96,12 @@ class AiModelInfo {
     );
   }
 
-  bool get isUncensored => label == 'UNCENSORED';
+  /// Uncensored nature: the label for catalog records, the tag
+  /// for custom ones. Custom records MUST keep label 'CUSTOM' -
+  /// isCustom (and therefore Hive persistence) keys off it; the
+  /// 1.15 classifier flipped custom labels to UNCENSORED and the
+  /// records silently stopped persisting (Claude audit, 2026-11-05).
+  bool get isUncensored => label == 'UNCENSORED' || tags.contains('uncensored');
   bool get isStandard => label == 'STANDARD';
   bool get isCustom => label == 'CUSTOM';
 }
