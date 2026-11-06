@@ -502,45 +502,10 @@ class ChatGptService {
             .timeout(const Duration(seconds: 15));
         throw Exception(_reason(body, resp.statusCode));
       }
-      // SSE parsed as EVENTS: data: lines accumulate until a
-      // blank line dispatches the event (multi-line payloads are
-      // legal and line-wise parsing silently dropped them).
       var completed = false;
       String? incompleteReason;
-      final dataLines = <String>[];
 
-      Stream<String> events() async* {
-        await for (final line in resp.stream
-            .transform(utf8.decoder)
-            .transform(const LineSplitter())
-            .timeout(const Duration(seconds: 90),
-                onTimeout: (sink) => sink.addError(
-                    const ChatGptTransientException(
-                        'ChatGPT stopped responding')))) {
-          if (line.isEmpty) {
-            if (dataLines.isNotEmpty) {
-              yield dataLines.join('\n');
-              dataLines.clear();
-            }
-            continue;
-          }
-          if (line.startsWith('data:')) {
-            var payload = line.substring(5);
-            if (payload.startsWith(' ')) payload = payload.substring(1);
-            dataLines.add(payload);
-          }
-        }
-        if (dataLines.isNotEmpty) yield dataLines.join('\n');
-      }
-
-      await for (final payload in events()) {
-        if (payload.isEmpty || payload == '[DONE]') continue;
-        Map<String, dynamic> d;
-        try {
-          d = jsonDecode(payload) as Map<String, dynamic>;
-        } catch (_) {
-          continue;
-        }
+      await for (final d in _events(resp)) {
         switch (d['type']) {
           case 'response.output_text.delta':
             final delta = d['delta']?.toString() ?? '';
@@ -569,6 +534,52 @@ class ChatGptService {
     }
   }
 
+  /// Decode a streamed Responses reply into event maps. SSE is
+  /// parsed as EVENTS: data: lines accumulate until a blank line
+  /// dispatches the event (multi-line payloads are legal and
+  /// line-wise parsing silently dropped them). [idle] aborts a
+  /// stalled stream as a transient failure.
+  Stream<Map<String, dynamic>> _events(
+    http.StreamedResponse resp, {
+    Duration idle = const Duration(seconds: 90),
+  }) async* {
+    final dataLines = <String>[];
+
+    Stream<String> payloads() async* {
+      await for (final line in resp.stream
+          .transform(utf8.decoder)
+          .transform(const LineSplitter())
+          .timeout(idle,
+              onTimeout: (sink) => sink.addError(
+                  const ChatGptTransientException(
+                      'ChatGPT stopped responding')))) {
+        if (line.isEmpty) {
+          if (dataLines.isNotEmpty) {
+            yield dataLines.join('\n');
+            dataLines.clear();
+          }
+          continue;
+        }
+        if (line.startsWith('data:')) {
+          var payload = line.substring(5);
+          if (payload.startsWith(' ')) payload = payload.substring(1);
+          dataLines.add(payload);
+        }
+      }
+      if (dataLines.isNotEmpty) yield dataLines.join('\n');
+    }
+
+    await for (final payload in payloads()) {
+      if (payload.isEmpty || payload == '[DONE]') continue;
+      try {
+        final d = jsonDecode(payload);
+        if (d is Map<String, dynamic>) yield d;
+      } catch (_) {
+        continue;
+      }
+    }
+  }
+
   String _reason(String body, int status) {
     try {
       final d = jsonDecode(body) as Map<String, dynamic>;
@@ -592,6 +603,13 @@ class ChatGptService {
   /// One image from the subscription backend. Returns PNG bytes.
   /// Throws with the backend's reason when it refuses (the image
   /// tab shows it on the item, same as every other lane).
+  ///
+  /// 1.20.4: the backend demands stream:true for image calls too
+  /// (Kai's 1.20.2/1.20.3 tests: 400 "Stream must be set to
+  /// true" - this also settles the question the Codex audit left
+  /// open). The finished image is collected from the stream: the
+  /// output_item.done event and the completed response's output
+  /// both carry it; partial_image events are progress only.
   Future<List<int>> generateImage({
     required String prompt,
     String size = '1024x1024',
@@ -599,47 +617,79 @@ class ChatGptService {
   }) async {
     onPhase?.call('Asking ChatGPT');
     final headers = await _headers();
-    final resp = await http
-        .post(
-          Uri.parse('$_backend/codex/responses'),
-          headers: headers,
-          body: jsonEncode({
-            'model': chatModel,
-            // The codex backend rejects a bare-string input with
-            // 400 "Input must be a list" (Kai's first image test,
-            // 2026-11-05) - same item-list shape as the chat path.
-            'input': [
-              {
-                'role': 'user',
-                'content': [
-                  {'type': 'input_text', 'text': prompt}
-                ],
-              }
-            ],
-            'tools': [
-              {'type': 'image_generation', 'size': size}
-            ],
-            'store': false,
-          }),
-        )
-        .timeout(const Duration(seconds: 240));
-    if (resp.statusCode != 200) {
-      throw Exception(_reason(resp.body, resp.statusCode));
-    }
-    Map<String, dynamic> d;
+    final client = http.Client();
     try {
-      d = jsonDecode(resp.body) as Map<String, dynamic>;
-    } catch (_) {
-      throw Exception('ChatGPT returned an unreadable image response');
-    }
-    final output = (d['output'] as List?) ?? const [];
-    for (final item in output) {
-      final m = item as Map;
-      if (m['type'] == 'image_generation_call') {
-        final result = m['result']?.toString() ?? '';
-        if (result.isNotEmpty) return base64Decode(result);
+      final req = http.Request('POST', Uri.parse('$_backend/codex/responses'));
+      req.headers.addAll(headers);
+      req.body = jsonEncode({
+        'model': chatModel,
+        // The codex backend rejects a bare-string input with
+        // 400 "Input must be a list" (Kai's first image test,
+        // 2026-11-05) - same item-list shape as the chat path.
+        'input': [
+          {
+            'role': 'user',
+            'content': [
+              {'type': 'input_text', 'text': prompt}
+            ],
+          }
+        ],
+        'tools': [
+          {'type': 'image_generation', 'size': size}
+        ],
+        'stream': true,
+        'store': false,
+      });
+      final resp = await client.send(req).timeout(const Duration(seconds: 60));
+      if (resp.statusCode != 200) {
+        final body = await resp.stream
+            .bytesToString()
+            .timeout(const Duration(seconds: 15));
+        throw Exception(_reason(body, resp.statusCode));
       }
+      String? imageB64;
+      String? incompleteReason;
+      var painting = false;
+      await for (final d
+          in _events(resp, idle: const Duration(seconds: 150))) {
+        switch (d['type']) {
+          case 'response.image_generation_call.partial_image':
+            if (!painting) {
+              painting = true;
+              onPhase?.call('Painting');
+            }
+          case 'response.output_item.done':
+            final item = d['item'] as Map?;
+            if (item?['type'] == 'image_generation_call') {
+              final r = item?['result']?.toString() ?? '';
+              if (r.isNotEmpty) imageB64 = r;
+            }
+          case 'response.completed':
+            final r = d['response'] as Map?;
+            final output = (r?['output'] as List?) ?? const [];
+            for (final item in output) {
+              final m = item as Map;
+              if (m['type'] == 'image_generation_call') {
+                final res = m['result']?.toString() ?? '';
+                if (res.isNotEmpty) imageB64 = res;
+              }
+            }
+          case 'response.incomplete':
+            final r = d['response'] as Map?;
+            final det = r?['incomplete_details'] as Map?;
+            incompleteReason = det?['reason']?.toString() ?? 'incomplete';
+          case 'response.failed':
+          case 'error':
+            throw Exception(_reason(jsonEncode(d), resp.statusCode));
+        }
+      }
+      if (imageB64 != null) return base64Decode(imageB64);
+      if (incompleteReason != null) {
+        throw Exception('ChatGPT cut the image short ($incompleteReason)');
+      }
+      throw Exception('ChatGPT returned no image for that prompt');
+    } finally {
+      client.close();
     }
-    throw Exception('ChatGPT returned no image for that prompt');
   }
 }
