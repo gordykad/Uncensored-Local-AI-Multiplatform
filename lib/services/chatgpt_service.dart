@@ -358,7 +358,17 @@ class ChatGptService {
           headers: headers,
           body: jsonEncode({
             'model': chatModel,
-            'input': prompt,
+            // The codex backend rejects a bare-string input with
+            // 400 "Input must be a list" (Kai's first image test,
+            // 2026-11-05) - same item-list shape as the chat path.
+            'input': [
+              {
+                'role': 'user',
+                'content': [
+                  {'type': 'input_text', 'text': prompt}
+                ],
+              }
+            ],
             'tools': [
               {'type': 'image_generation', 'size': size}
             ],
