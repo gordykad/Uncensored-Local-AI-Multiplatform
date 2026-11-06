@@ -12,6 +12,7 @@ import 'package:video_player/video_player.dart';
 
 import '../services/image_gen_service.dart';
 import '../theme/app_colors.dart';
+import '../widgets/tab_header.dart';
 
 class GenGalleryScreen extends StatefulWidget {
   final bool embedded;
@@ -47,31 +48,20 @@ class _GenGalleryScreenState extends State<GenGalleryScreen> {
   Widget build(BuildContext context) {
     final body = Column(
       children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(6, 8, 18, 6),
-          child: Row(
-            children: [
-              // Back button (Kai, 2026-11-04: the page shipped with
-              // none - as a pushed page that traps the user).
-              IconButton(
-                onPressed: () => Navigator.of(context).maybePop(),
-                icon: const Icon(Icons.arrow_back_ios_new_rounded,
-                    size: 18, color: AppColors.darkTextM),
-                tooltip: 'Back',
-              ),
-              const Text('Previous Gens',
-                  style: TextStyle(
-                      color: AppColors.darkText,
-                      fontSize: 19,
-                      fontWeight: FontWeight.w600)),
-              const Spacer(),
-              Text(
-                _records.isEmpty ? '' : '${_records.length} saved',
-                style: const TextStyle(
-                    color: AppColors.darkTextD, fontSize: 12.5),
-              ),
-            ],
-          ),
+        // Shared TabHeader (audit P2-10). Back stays maybePop: as
+        // a pushed page it must never trap the user (Kai, 2026-11-04).
+        TabHeader(
+          title: 'Previous Gens',
+          showBackButton: true,
+          onBack: () => Navigator.of(context).maybePop(),
+          trailing: [
+            Text(
+              _records.isEmpty ? '' : '${_records.length} saved',
+              style: const TextStyle(
+                  color: AppColors.darkTextD, fontSize: 12.5),
+            ),
+            const SizedBox(width: 14),
+          ],
         ),
         Expanded(child: _records.isEmpty ? _empty() : _grid()),
       ],
@@ -117,7 +107,13 @@ class _GenGalleryScreenState extends State<GenGalleryScreen> {
       itemCount: _records.length,
       itemBuilder: (_, i) {
         final rec = _records[i];
-        return GestureDetector(
+        // UI audit 2026-11-06 (Codex P1-7): tiles announce what
+        // they are - media type plus the prompt that made them.
+        return Semantics(
+          button: true,
+          label:
+              '${rec.isVideo ? 'Video' : 'Image'}: ${rec.prompt}',
+          child: GestureDetector(
           onTap: () => Get.to(() => _GenViewer(rec: rec, svc: _svc)),
           child: ClipRRect(
             borderRadius: BorderRadius.circular(8),
@@ -148,6 +144,7 @@ class _GenGalleryScreenState extends State<GenGalleryScreen> {
                     ),
                   ),
           ),
+          ),
         );
       },
     );
@@ -166,6 +163,7 @@ class _ClipView extends StatefulWidget {
 class _ClipViewState extends State<_ClipView> {
   VideoPlayerController? _ctl;
   bool _ready = false;
+  bool _failed = false;
 
   @override
   void initState() {
@@ -175,9 +173,13 @@ class _ClipViewState extends State<_ClipView> {
     c.initialize().then((_) {
       if (!mounted) return;
       c.setLooping(true);
-      c.play();
+      // UI audit 2026-11-06: no autoplay under Reduce Motion, and a
+      // failed init surfaces instead of spinning forever (P1-15).
+      if (!MediaQuery.disableAnimationsOf(context)) c.play();
       setState(() => _ready = true);
-    }).catchError((_) {});
+    }).catchError((_) {
+      if (mounted) setState(() => _failed = true);
+    });
   }
 
   @override
@@ -189,6 +191,17 @@ class _ClipViewState extends State<_ClipView> {
   @override
   Widget build(BuildContext context) {
     final c = _ctl;
+    if (_failed) {
+      return AspectRatio(
+        aspectRatio: 832 / 480,
+        child: Center(
+          child: Text(
+            'This video could not be played.',
+            style: TextStyle(fontSize: 12, color: context.textM),
+          ),
+        ),
+      );
+    }
     if (!_ready || c == null) {
       return const AspectRatio(
         aspectRatio: 832 / 480,
@@ -233,7 +246,8 @@ class _GenViewer extends StatelessWidget {
   String _when(int ts) {
     final d = DateTime.fromMillisecondsSinceEpoch(ts);
     final mm = d.minute.toString().padLeft(2, '0');
-    return '${d.month}/${d.day}/${d.year}  ${d.hour}:$mm';
+    final hh = d.hour.toString().padLeft(2, '0');
+    return '${d.month}/${d.day}/${d.year}  $hh:$mm';
   }
 
   @override
@@ -244,35 +258,55 @@ class _GenViewer extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(6, 8, 14, 4),
-              child: Row(children: [
-                IconButton(
-                  onPressed: () => Get.back(),
-                  icon: const Icon(Icons.arrow_back_ios_new_rounded,
-                      color: AppColors.darkText, size: 19),
-                ),
-                const Text('Generation',
+            TabHeader(
+              title: 'Generation',
+              showBackButton: true,
+              onBack: () => Get.back(),
+              trailing: [
+              TextButton(
+                onPressed: () async {
+                  // UI audit 2026-11-06 P1-5: permanent deletion
+                  // confirms first (Codex P2-31).
+                  final sure = await showDialog<bool>(
+                    context: context,
+                    builder: (dCtx) => AlertDialog(
+                      backgroundColor: AppColors.darkBgPanel,
+                      title: const Text('Delete this generation?',
+                          style: TextStyle(color: AppColors.darkText)),
+                      content: const Text(
+                        'The file and its history entry will be removed. This cannot be undone.',
+                        style: TextStyle(
+                            color: AppColors.darkTextM, fontSize: 13),
+                      ),
+                      actions: [
+                        TextButton(
+                          onPressed: () => Navigator.of(dCtx).pop(false),
+                          child: const Text('Cancel'),
+                        ),
+                        FilledButton(
+                          style: FilledButton.styleFrom(
+                              backgroundColor: AppColors.redDeep),
+                          onPressed: () => Navigator.of(dCtx).pop(true),
+                          child: const Text('Delete'),
+                        ),
+                      ],
+                    ),
+                  );
+                  if (sure != true) return;
+                  await svc.deleteGeneration(rec);
+                  Get.back();
+                  Get.snackbar('Previous Gens', 'Deleted.',
+                      snackPosition: SnackPosition.BOTTOM,
+                      backgroundColor: AppColors.darkBgPanel,
+                      colorText: AppColors.darkText,
+                      duration: const Duration(seconds: 2));
+                },
+                child: const Text('Delete',
                     style: TextStyle(
-                        color: AppColors.darkText,
-                        fontSize: 16.5,
-                        fontWeight: FontWeight.w600)),
-                const Spacer(),
-                TextButton(
-                  onPressed: () async {
-                    await svc.deleteGeneration(rec);
-                    Get.back();
-                    Get.snackbar('Previous Gens', 'Deleted.',
-                        snackPosition: SnackPosition.BOTTOM,
-                        backgroundColor: AppColors.darkBgPanel,
-                        colorText: AppColors.darkText,
-                        duration: const Duration(seconds: 2));
-                  },
-                  child: const Text('Delete',
-                      style: TextStyle(
-                          color: AppColors.red, fontSize: 13.5)),
-                ),
-              ]),
+                        color: AppColors.red, fontSize: 13.5)),
+              ),
+                const SizedBox(width: 6),
+              ],
             ),
             Expanded(
               child: SingleChildScrollView(
@@ -284,8 +318,14 @@ class _GenViewer extends StatelessWidget {
                         borderRadius: BorderRadius.circular(14),
                         child: rec.isVideo
                             ? _ClipView(path: rec.file)
-                            : Image.file(File(rec.file),
-                                fit: BoxFit.cover, width: double.infinity),
+                            // UI audit 2026-11-06 P2-12: pinch to zoom.
+                            : InteractiveViewer(
+                                minScale: 1,
+                                maxScale: 4,
+                                child: Image.file(File(rec.file),
+                                    fit: BoxFit.cover,
+                                    width: double.infinity),
+                              ),
                       ),
                       const SizedBox(height: 14),
                       Text(rec.prompt,

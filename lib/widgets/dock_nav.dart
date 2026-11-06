@@ -9,6 +9,7 @@ import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 
 import '../theme/app_colors.dart';
+import '../theme/app_icons.dart';
 import '../theme/type_scale.dart';
 
 class DockNav extends StatefulWidget {
@@ -31,15 +32,17 @@ class _DockNavState extends State<DockNav> {
   // Founder ramp, light -> dark (Amendment 8). Previous Gens is NOT
   // a dock tab - it is a button inside Image Gen (Kai, 2026-11-04).
   static const _tiles = [
-    (Icons.chat_bubble_rounded, Color(0xFFC084FC), 'Chat'),
-    (Icons.layers_rounded, Color(0xFFA855F7), 'Models'),
-    (Icons.auto_awesome_rounded, Color(0xFF9333EA), 'Image Gen'),
-    (Icons.settings_rounded, Color(0xFF7E22CE), 'Settings'),
+    (AppIcons.chat, Color(0xFFC084FC), 'Chat'),
+    (AppIcons.models, Color(0xFFA855F7), 'Models'),
+    (AppIcons.imageGen, Color(0xFF9333EA), 'Image Gen'),
+    (AppIcons.settings, Color(0xFF7E22CE), 'Settings'),
   ];
 
   // 1.13.0 (Kai): the dock runs ~15% wider than the 1.12.0 build —
   // tile 52 -> 58, gaps and padding scaled to match (267 -> 306 px).
   double _sizeFor(int i) {
+    // UI audit 2026-11-06 P3-4: Reduce Motion freezes the magnify.
+    if (RM.off(context)) return 58;
     if (_pointerX == null) return 58;
     final ctx = _keys[i].currentContext;
     if (ctx == null) return 58;
@@ -109,8 +112,14 @@ class _DockNavState extends State<DockNav> {
     final (icon, color, label) = _tiles[i];
     final size = _sizeFor(i);
     final selected = widget.selectedIndex == i;
-    return GestureDetector(
+    // UI audit 2026-11-06 P1-9: tiles announce as selectable buttons.
+    return Semantics(
+      button: true,
+      selected: selected,
+      label: label,
       onTap: () => widget.onSelect(i),
+      child: GestureDetector(
+        onTap: () => widget.onSelect(i),
       child: Column(
         key: _keys[i],
         mainAxisSize: MainAxisSize.min,
@@ -154,6 +163,7 @@ class _DockNavState extends State<DockNav> {
             ),
           ),
         ],
+      ),
       ),
     );
   }

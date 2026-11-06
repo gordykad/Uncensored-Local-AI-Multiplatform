@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:http/http.dart' as http;
 import '../theme/app_colors.dart';
+import '../theme/app_icons.dart';
 import '../widgets/faithful/sonar.dart';
 import '../services/local_api_server_service.dart';
 import '../services/admin_activity_service.dart';
@@ -87,7 +88,7 @@ class _ApiEndpointsScreenState extends State<ApiEndpointsScreen> {
               child: Row(
                 children: [
                   Icon(
-                    running ? Icons.check_circle_rounded : Icons.error_rounded,
+                    running ? AppIcons.checkCircle : AppIcons.errorCircle,
                     color: running ? AppColors.green : AppColors.red,
                   ),
                   const SizedBox(width: 12),
@@ -213,7 +214,7 @@ class _ApiEndpointsScreenState extends State<ApiEndpointsScreen> {
                 width: double.infinity,
                 padding: const EdgeInsets.all(12),
                 decoration: BoxDecoration(
-                  color: context.isDark ? Colors.black26 : Colors.grey[200],
+                  color: AppColors.codeBg,
                   borderRadius: BorderRadius.circular(8),
                   border: Border.all(color: context.border),
                 ),

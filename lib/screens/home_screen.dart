@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 
 import '../theme/app_colors.dart';
+import '../theme/app_icons.dart';
 import '../controllers/chat_controller.dart';
 import '../controllers/model_controller.dart';
 import '../controllers/theme_controller.dart';
@@ -74,7 +75,7 @@ class _HomeScreenState extends State<HomeScreen> {
       if (_wasGenerating && !gen) {
         final msgs = _chatCtrl.activeChat?.messages;
         final last = msgs == null || msgs.isEmpty ? null : msgs.last;
-        if (last != null && !last.isUser && last.content.startsWith('⚠')) {
+        if (last != null && !last.isUser && last.failed) {
           TapFx.error();
         } else {
           TapFx.done();
@@ -353,7 +354,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   // Hint for large models
                   if (progress == 0)
                     Text(
-                      'Large models (5GB+) take about 30-50 seconds for Android to process. Please wait.',
+                      'Large models (5GB+) take about 30-50 seconds for the phone to process. Please wait.',
                       style: TextStyle(
                         fontSize: 10,
                         color: context.textD,
@@ -418,12 +419,16 @@ class _HomeScreenState extends State<HomeScreen> {
                     Container(
                       width: 32,
                       height: 32,
+                      // UI audit 2026-11-06 P2-2: the drawer mark is
+                      // identity chrome, not an action; the decorative
+                      // gradient retires (house law rules it out).
                       decoration: BoxDecoration(
-                        gradient: AppColors.accentGradient,
+                        color: context.bgInput,
+                        border: Border.all(color: context.border),
                         borderRadius: BorderRadius.circular(8),
                       ),
                       child: const Icon(
-                        Icons.bolt_rounded,
+                        AppIcons.zap,
                         size: 18,
                         color: Colors.white,
                       ),
@@ -478,15 +483,26 @@ class _HomeScreenState extends State<HomeScreen> {
         child: IndexedStack(
           index: _mobileTabIndex,
           children: [
-            // Tab 0: Chat
-            _buildMobileChatTab(),
-            // Tab 1: Models
-            const ModelLibraryScreen(embedded: true),
-            // Tab 2: Image Gen (ticket 28). Previous Gens is a button
-            // inside it, not a tab (Kai, 2026-11-04).
-            const ImageGenScreen(embedded: true),
-            // Tab 3: Settings
-            const SettingsScreen(embedded: true),
+            // UI audit 2026-11-06 P2-7: hidden tabs stop ticking.
+            // IndexedStack keeps every tab mounted; without this,
+            // Image Gen's beam and sparkle loops ran forever in the
+            // background (battery + Reduce Motion violations).
+            TickerMode(
+              enabled: _mobileTabIndex == 0,
+              child: _buildMobileChatTab(),
+            ),
+            TickerMode(
+              enabled: _mobileTabIndex == 1,
+              child: const ModelLibraryScreen(embedded: true),
+            ),
+            TickerMode(
+              enabled: _mobileTabIndex == 2,
+              child: const ImageGenScreen(embedded: true),
+            ),
+            TickerMode(
+              enabled: _mobileTabIndex == 3,
+              child: const SettingsScreen(embedded: true),
+            ),
           ],
         ),
       ),
@@ -605,34 +621,47 @@ class _HomeScreenState extends State<HomeScreen> {
       if (!_chatCtrl.isGenerating.value) return const SizedBox.shrink();
       return Padding(
         padding: const EdgeInsets.only(right: 4),
-        child: InkWell(
-          onTap: () {
-            TapFx.stop();
-            setState(() => _stopCount++);
-            _chatCtrl.stopGeneration();
-          },
-          borderRadius: BorderRadius.circular(20),
-          child: Container(
-            height: 36,
-            padding: const EdgeInsets.symmetric(horizontal: 12),
-            decoration: BoxDecoration(
-              color: AppColors.red,
-              borderRadius: BorderRadius.circular(20),
-            ),
-            child: const Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(Icons.stop_rounded, size: 16, color: Colors.white),
-                SizedBox(width: 5),
-                Text(
-                  'Stop',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600,
+        // UI audit 2026-11-06: 44pt hit area (chip stays 36 tall), a
+        // VoiceOver identity, and the deeper red fill (white text on
+        // AppColors.red measures only 3.35:1).
+        child: Semantics(
+          button: true,
+          label: 'Stop generation',
+          child: InkWell(
+            onTap: () {
+              TapFx.stop();
+              setState(() => _stopCount++);
+              _chatCtrl.stopGeneration();
+            },
+            borderRadius: BorderRadius.circular(20),
+            child: ConstrainedBox(
+              constraints: const BoxConstraints(minHeight: 44),
+              child: Center(
+                widthFactor: 1,
+                child: Container(
+                  height: 36,
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                  decoration: BoxDecoration(
+                    color: AppColors.redDeep,
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  child: const Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.stop_rounded, size: 16, color: Colors.white),
+                      SizedBox(width: 5),
+                      Text(
+                        'Stop',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
                   ),
                 ),
-              ],
+              ),
             ),
           ),
         ),
@@ -683,8 +712,15 @@ class _HomeScreenState extends State<HomeScreen> {
                 final active = loaded || remoteOn;
 
                 return GestureDetector(
+                  // UI audit 2026-11-06 residual: the header model
+                  // selector's tap area was the text row alone
+                  // (~20pt). Opaque hit + vertical padding gives it
+                  // a 44pt-tall target without changing the layout.
+                  behavior: HitTestBehavior.opaque,
                   onTap: () => _showModelPicker(context),
-                  child: Row(
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 11),
+                    child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       // Status dot — audit #8: never color-alone;
@@ -704,13 +740,16 @@ class _HomeScreenState extends State<HomeScreen> {
                           margin: const EdgeInsets.only(right: 6),
                           decoration: BoxDecoration(
                             shape: BoxShape.circle,
+                            // UI audit 2026-11-06 P2-2: remote and
+                            // no-model states go neutral (the caption
+                            // text already names the state).
                             color: isLoading
                                 ? AppColors.orange
                                 : remoteOn
-                                ? AppColors.accent
+                                ? AppColors.darkTextM
                                 : loaded
                                 ? AppColors.green
-                                : AppColors.accent,
+                                : AppColors.darkTextD,
                           ),
                         ),
                       ),
@@ -733,7 +772,10 @@ class _HomeScreenState extends State<HomeScreen> {
                                 ? context.textD
                                 : active
                                 ? context.text
-                                : AppColors.accent,
+                                // UI audit 2026-11-06 P2-5: accent as
+                                // 14pt text fails (3.8:1); accentHi
+                                // passes (4.9:1).
+                                : AppColors.accentHi,
                           ),
                         ),
                       ),
@@ -758,6 +800,7 @@ class _HomeScreenState extends State<HomeScreen> {
                         color: context.textM,
                       ),
                     ],
+                    ),
                   ),
                 );
               }),
@@ -818,7 +861,7 @@ class _HomeScreenState extends State<HomeScreen> {
           ? filename
           : '${info.sizeGb} GB \u00b7 Min ${info.minRamGb} GB RAM \u00b7 '
                 '${info.minRamGb > 6
-                    ? 'TOO BIG'
+                    ? 'TOO LARGE'
                     : info.sizeGb > 4
                     ? 'STREAMS'
                     : 'FITS'}';
@@ -897,10 +940,10 @@ class _HomeScreenState extends State<HomeScreen> {
           'Mesh',
           s.model,
           s.dead
-              ? '${s.lane} · DEAD RN · pick to retry'
+              ? '${s.lane} · NOT WORKING · tap to retry'
               : s.isBlocked
               ? (s.blocked ?? 'Unavailable on this gateway')
-              : '${s.lane} \u00b7 ${s.isVerified ? 'VERIFIED' : 'SMOKE TEST'}',
+              : '${s.lane} \u00b7 ${s.isVerified ? 'VERIFIED' : 'UNTESTED'}',
           () {
             if (s.isBlocked) {
               ScaffoldMessenger.of(context).showSnackBar(
@@ -935,8 +978,14 @@ class _HomeScreenState extends State<HomeScreen> {
     }
 
     if (entries.isEmpty) {
-      // Nothing anywhere — nudge user to Models tab
+      // Nothing anywhere: go to Models, and say why (the old code
+      // jumped tabs silently - UI audit 2026-11-06 P2-8).
       setState(() => _mobileTabIndex = 1);
+      Get.snackbar(
+        'No models yet',
+        'Download or import a model to start chatting.',
+        snackPosition: SnackPosition.BOTTOM,
+      );
       return;
     }
 
@@ -1276,7 +1325,7 @@ class _HomeScreenState extends State<HomeScreen> {
           var failed = false;
           if (!gen && chat != null && chat.messages.isNotEmpty) {
             final last = chat.messages.last;
-            if (last.isAssistant) failed = last.content.startsWith('⚠');
+            if (last.isAssistant) failed = last.failed;
           }
           return MorphOrbComposer(
             controller: _msgController,
@@ -1320,7 +1369,7 @@ class _HomeScreenState extends State<HomeScreen> {
               () => Text(
                 _llm.isLoaded.value
                     ? 'Type a message below to get started.'
-                    : 'Pick a model. Nothing leaves this phone.',
+                    : 'Pick a model. On-device models never leave this phone.',
                 style: TextStyle(
                   fontSize: TS.of(context, 14),
                   color: context.textM,
@@ -1438,7 +1487,7 @@ class _AdminToastOverlay extends StatelessWidget {
                       width: 7,
                       height: 7,
                       decoration: const BoxDecoration(
-                        color: AppColors.accent,
+                        color: AppColors.darkTextM,
                         shape: BoxShape.circle,
                       ),
                     ),

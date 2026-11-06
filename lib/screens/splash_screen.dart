@@ -3,6 +3,7 @@ import 'package:get/get.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 
 import '../theme/app_colors.dart';
+import '../theme/type_scale.dart';
 import '../widgets/faithful/textfx.dart';
 import '../widgets/faithful/shared.dart';
 import '../services/llm_service.dart';
@@ -110,23 +111,30 @@ class _SplashScreenState extends State<SplashScreen> {
                   ),
                 )
                 .animate()
-                .fadeIn(duration: 600.ms)
+                .fadeIn(
+                    duration:
+                        RM.off(context) ? Duration.zero : 600.ms)
                 .scale(begin: const Offset(0.8, 0.8)),
             const SizedBox(height: 24),
-            SignalReveal(
-              text: 'ASTRO MINIX',
-              style: TextStyle(
-                fontSize: 27,
-                fontWeight: FontWeight.w700,
-                color: context.text,
-                letterSpacing: 1.5,
+            TickerMode(
+              enabled: !RM.off(context),
+              child: SignalReveal(
+                text: 'ASTRO MINIX',
+                style: TextStyle(
+                  fontSize: 27,
+                  fontWeight: FontWeight.w700,
+                  color: context.text,
+                  letterSpacing: 1.5,
+                ),
               ),
             ),
             const SizedBox(height: 8),
             Text(
-              'Nothing leaves this phone.',
+              'On-device models never leave this phone.',
               style: TextStyle(fontSize: 13, color: context.textM),
-            ).animate().fadeIn(delay: 400.ms, duration: 600.ms),
+            ).animate().fadeIn(
+                delay: RM.off(context) ? Duration.zero : 400.ms,
+                duration: RM.off(context) ? Duration.zero : 600.ms),
             const SizedBox(height: 26),
             const RedactionBars(widths: [120, 84, 142], barHeight: 9),
             const SizedBox(height: 34),
@@ -137,12 +145,19 @@ class _SplashScreenState extends State<SplashScreen> {
                 strokeWidth: 2.5,
                 valueColor: AlwaysStoppedAnimation(AppColors.accent),
               ),
-            ).animate().fadeIn(delay: 600.ms),
+            ).animate().fadeIn(
+                delay: RM.off(context) ? Duration.zero : 600.ms,
+                duration: RM.off(context) ? Duration.zero : 400.ms),
             const SizedBox(height: 16),
-            ScrambleText(
-              text: _status,
-              style: TextStyle(fontSize: 12, color: context.textD),
-            ).animate().fadeIn(delay: 600.ms),
+            TickerMode(
+              enabled: !RM.off(context),
+              child: ScrambleText(
+                text: _status,
+                style: TextStyle(fontSize: 12, color: context.textD),
+              ),
+            ).animate().fadeIn(
+                delay: RM.off(context) ? Duration.zero : 600.ms,
+                duration: RM.off(context) ? Duration.zero : 400.ms),
           ],
         ),
       ),

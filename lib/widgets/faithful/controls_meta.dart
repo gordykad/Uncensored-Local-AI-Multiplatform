@@ -17,6 +17,8 @@
 // context up top, decision actions pinned at the bottom; approve is the
 // card's single accent action, reject/skip stays ghost.
 import 'package:flutter/material.dart';
+
+import '../../theme/app_colors.dart';
 import 'package:flutter/physics.dart';
 
 // --------------------------------------------------------- Segmented (#4)
@@ -54,6 +56,13 @@ class _MinixSegmentedState extends State<MinixSegmented>
   void didUpdateWidget(MinixSegmented old) {
     super.didUpdateWidget(old);
     if (old.index != widget.index) {
+      // UI audit 2026-11-06 (Codex P1-11): under Reduce Motion the
+      // thumb snaps; the spring runs only when motion is allowed.
+      if (MediaQuery.disableAnimationsOf(context)) {
+        _thumb.stop();
+        _thumb.value = widget.index.toDouble();
+        return;
+      }
       _thumb.animateWith(
         SpringSimulation(
           const SpringDescription(mass: 1, stiffness: 260, damping: 24),
@@ -76,16 +85,17 @@ class _MinixSegmentedState extends State<MinixSegmented>
     final n = widget.options.length;
     return Container(
       decoration: BoxDecoration(
-        color: const Color(0xFF121214),
+        color: AppColors.darkBgInput,
         borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: const Color(0xFF1A1A1E)),
+        border: Border.all(color: AppColors.darkBorderFaint),
       ),
       padding: const EdgeInsets.all(3),
       child: LayoutBuilder(
         builder: (_, box) {
           final segW = box.maxWidth / n;
+          // UI audit 2026-11-06: segments get a 44pt hit height.
           return SizedBox(
-            height: 32,
+            height: 44,
             child: Stack(
               children: [
                 Positioned(
@@ -93,9 +103,9 @@ class _MinixSegmentedState extends State<MinixSegmented>
                   top: 0,
                   child: Container(
                     width: segW,
-                    height: 32,
+                    height: 44,
                     decoration: BoxDecoration(
-                      color: const Color(0xFFF2F2F0),
+                      color: AppColors.darkText,
                       borderRadius: BorderRadius.circular(8),
                     ),
                   ),
@@ -107,7 +117,11 @@ class _MinixSegmentedState extends State<MinixSegmented>
                         child: GestureDetector(
                           onTap: () => widget.onChanged(i),
                           behavior: HitTestBehavior.opaque,
-                          child: Center(
+                          child: Semantics(
+                            button: true,
+                            selected: i == widget.index,
+                            label: widget.options[i],
+                            child: Center(
                             child: Text(
                               widget.options[i],
                               style: TextStyle(
@@ -115,9 +129,10 @@ class _MinixSegmentedState extends State<MinixSegmented>
                                 fontWeight: FontWeight.w600,
                                 color: (_pos - i).abs() < 0.5
                                     ? const Color(0xFF050506)
-                                    : const Color(0xFF9C9CA3),
+                                    : AppColors.darkTextM,
                               ),
                             ),
+                          ),
                           ),
                         ),
                       ),
@@ -145,7 +160,15 @@ class _ChatThreadSkeletonState extends State<ChatThreadSkeleton>
   late final AnimationController _c = AnimationController(
     vsync: this,
     duration: const Duration(milliseconds: 1800),
-  )..repeat();
+  );
+
+  @override
+  void initState() {
+    super.initState();
+    // UI audit 2026-11-06: the shimmer never starts under Reduce
+    // Motion; the blocks render at their resting opacity.
+    if (!MediaQuery.disableAnimationsOf(context)) _c.repeat();
+  }
 
   @override
   void dispose() {
@@ -227,9 +250,9 @@ class ApprovalCard extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: const Color(0xFF0C0C0E),
+        color: AppColors.darkBgPanel,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: const Color(0xFF26262B)),
+        border: Border.all(color: AppColors.darkBorder),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -237,7 +260,7 @@ class ApprovalCard extends StatelessWidget {
           Text(
             title,
             style: const TextStyle(
-              color: Color(0xFFF2F2F0),
+              color: AppColors.darkText,
               fontSize: 14,
               fontWeight: FontWeight.w600,
             ),
@@ -245,7 +268,7 @@ class ApprovalCard extends StatelessWidget {
           const SizedBox(height: 6),
           Text(
             body,
-            style: const TextStyle(color: Color(0xFF9C9CA3), fontSize: 13),
+            style: const TextStyle(color: AppColors.darkTextM, fontSize: 13),
           ),
           const SizedBox(height: 14),
           Row(
@@ -255,14 +278,14 @@ class ApprovalCard extends StatelessWidget {
                 onPressed: onReject,
                 child: Text(
                   rejectLabel,
-                  style: const TextStyle(color: Color(0xFF9C9CA3)),
+                  style: const TextStyle(color: AppColors.darkTextM),
                 ),
               ),
               const SizedBox(width: 8),
               FilledButton(
                 onPressed: onApprove,
                 style: FilledButton.styleFrom(
-                  backgroundColor: const Color(0xFF9333EA),
+                  backgroundColor: AppColors.accent,
                   foregroundColor: Colors.white,
                 ),
                 child: Text(approveLabel),

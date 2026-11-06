@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:percent_indicator/linear_percent_indicator.dart';
 
 import '../theme/app_colors.dart';
+import '../theme/app_icons.dart';
 import '../models/ai_model_info.dart';
 import '../models/download_state.dart';
 
@@ -86,7 +87,7 @@ class ModelCard extends StatelessWidget {
                         _statusBadge(
                           'LOADED',
                           AppColors.green,
-                          Icons.check_circle,
+                          AppIcons.checkCircle,
                         ),
                       if (isLoadingModel)
                         _statusBadge(
@@ -143,20 +144,20 @@ class ModelCard extends StatelessWidget {
                         horizontal: 8,
                         vertical: 3,
                       ),
+                      // UI audit 2026-11-06 P2-2: tags are metadata,
+                      // not actions; neutral chrome.
                       decoration: BoxDecoration(
-                        color: AppColors.accent.withValues(alpha: 0.12),
+                        color: context.bgInput,
                         borderRadius: BorderRadius.circular(999),
-                        border: Border.all(
-                          color: AppColors.accent.withValues(alpha: 0.45),
-                        ),
+                        border: Border.all(color: context.border),
                       ),
                       child: Text(
                         t.toUpperCase(),
-                        style: const TextStyle(
+                        style: TextStyle(
                           fontSize: 10,
                           fontWeight: FontWeight.w600,
                           letterSpacing: 0.6,
-                          color: AppColors.accentHi,
+                          color: context.textM,
                         ),
                       ),
                     ),
@@ -198,7 +199,7 @@ class ModelCard extends StatelessWidget {
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       Icon(
-                        Icons.check_circle_rounded,
+                        AppIcons.checkCircle,
                         size: 14,
                         color: AppColors.green,
                       ),
@@ -233,7 +234,7 @@ class ModelCard extends StatelessWidget {
                 model.isCustom &&
                 !model.hasRemoteUrl) ...[
               Text(
-                'Imported from a file — add a download link to make it redownloadable.',
+                'Imported from a file. Add a download link to make it redownloadable.',
                 style: TextStyle(fontSize: 11, color: context.textD),
               ),
               const SizedBox(height: 10),
@@ -258,9 +259,9 @@ class ModelCard extends StatelessWidget {
           lineHeight: 6,
           percent: loadingProgress.clamp(0.0, 1.0),
           backgroundColor: context.border,
-          linearGradient: const LinearGradient(
-            colors: [AppColors.orange, AppColors.accent],
-          ),
+          // UI audit 2026-11-06 P2-2: progress is status; a solid
+          // accent fill, no orange-to-purple gradient.
+          progressColor: AppColors.accent,
           barRadius: const Radius.circular(3),
           padding: EdgeInsets.zero,
           animation: false,
@@ -307,8 +308,9 @@ class ModelCard extends StatelessWidget {
                     horizontal: 10,
                     vertical: 6,
                   ),
-                  minimumSize: Size.zero,
-                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  // UI audit 2026-11-06 P1-7: 44pt minimum target.
+                  minimumSize: const Size(44, 44),
+                  tapTargetSize: MaterialTapTargetSize.padded,
                 ),
                 icon: const Icon(Icons.stop_circle_outlined, size: 16),
                 label: const Text(
@@ -331,9 +333,9 @@ class ModelCard extends StatelessWidget {
           lineHeight: 6,
           percent: ds.progress,
           backgroundColor: context.border,
-          linearGradient: const LinearGradient(
-            colors: [AppColors.accent, Color(0xFF8B5CF6)],
-          ),
+          // UI audit 2026-11-06 P2-2/P2-4: solid accent (the
+          // gradient's second stop was an off-token violet).
+          progressColor: AppColors.accent,
           barRadius: const Radius.circular(3),
           padding: EdgeInsets.zero,
           animation: false,
@@ -359,7 +361,7 @@ class ModelCard extends StatelessWidget {
                 borderRadius: BorderRadius.circular(4),
               ),
               child: Text(
-                '⚡ ${ds.speedStr}',
+                ds.speedStr,
                 style: const TextStyle(fontSize: 11, color: AppColors.accentHi),
               ),
             ),
@@ -369,8 +371,9 @@ class ModelCard extends StatelessWidget {
               style: TextButton.styleFrom(
                 foregroundColor: AppColors.red,
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                minimumSize: Size.zero,
-                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                // UI audit 2026-11-06 P1-7: 44pt minimum target.
+                minimumSize: const Size(44, 44),
+                tapTargetSize: MaterialTapTargetSize.padded,
               ),
               icon: const Icon(Icons.close_rounded, size: 14),
               label: const Text('Cancel', style: TextStyle(fontSize: 11)),
@@ -465,7 +468,9 @@ class ModelCard extends StatelessWidget {
               icon: const Icon(Icons.play_arrow_rounded, size: 18),
               label: const Text('Load Model'),
               style: ElevatedButton.styleFrom(
-                backgroundColor: AppColors.green,
+                // UI audit 2026-11-06 P1-8: the action color, not
+                // green (white on green measured 2.54:1).
+                backgroundColor: AppColors.accent,
                 foregroundColor: Colors.white,
                 elevation: 0,
                 shape: RoundedRectangleBorder(
@@ -491,7 +496,7 @@ class ModelCard extends StatelessWidget {
             child: OutlinedButton.icon(
               onPressed: null,
               icon: const Icon(
-                Icons.check_circle_rounded,
+                AppIcons.checkCircle,
                 size: 16,
                 color: AppColors.green,
               ),
@@ -519,7 +524,9 @@ class ModelCard extends StatelessWidget {
                   onTap: onUnload,
                   borderRadius: BorderRadius.circular(8),
                   child: const Padding(
-                    padding: EdgeInsets.all(8),
+                    // UI audit 2026-11-06 P1-7: 20pt glyph + 12pt
+                    // padding = a 44pt target.
+                    padding: EdgeInsets.all(12),
                     child: Icon(
                       Icons.eject_rounded,
                       size: 20,
@@ -558,7 +565,9 @@ class ModelCard extends StatelessWidget {
         style: TextStyle(
           fontSize: 10,
           fontWeight: FontWeight.w700,
-          color: isUncensored ? AppColors.uncensored : AppColors.standard,
+          // UI audit 2026-11-06 P2-5: label TEXT rides accentHi
+          // (4.9:1); the tint keeps the brand mark color.
+          color: isUncensored ? AppColors.accentHi : AppColors.standard,
           letterSpacing: 0.5,
         ),
       ),

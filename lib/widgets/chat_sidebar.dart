@@ -110,11 +110,14 @@ class ChatSidebar extends StatelessWidget {
                                 overflow: TextOverflow.ellipsis,
                               ),
                             ),
-                            // Delete button with confirmation
+                            // Delete button with confirmation.
+                            // UI audit 2026-11-06 P1-7: 44pt hit area,
+                            // the glyph stays small.
                             SizedBox(
-                              width: 24,
-                              height: 24,
+                              width: 44,
+                              height: 44,
                               child: IconButton(
+                                tooltip: 'Delete chat',
                                 onPressed: () => _confirmDelete(context, chat.id, chat.title),
                                 icon: Icon(Icons.close_rounded, size: 14, color: context.textD),
                                 padding: EdgeInsets.zero,
@@ -182,7 +185,7 @@ class ChatSidebar extends StatelessWidget {
               onDeleteChat(chatId);
             },
             style: ElevatedButton.styleFrom(
-              backgroundColor: AppColors.red,
+              backgroundColor: AppColors.redDeep,
               elevation: 0,
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
             ),

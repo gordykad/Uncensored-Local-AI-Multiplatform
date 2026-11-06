@@ -31,6 +31,10 @@ class AppColors {
   static const accentHi = Color(0xFFA855F7);
   static const green = Color(0xFF3FB950);
   static const red = Color(0xFFF85149);
+  // UI audit 2026-11-06 P2-5: darker red for FILLED destructive
+  // buttons; white text on it measures about 4.6:1 (red itself is
+  // 3.35:1 and stays the text/icon red).
+  static const redDeep = Color(0xFFD13B35);
   static const orange = Color(0xFFE3B341);
 
   // ── Dark Theme Colors ──────────────────────────────────────────
@@ -62,6 +66,11 @@ class AppColors {
   static const lightTextD = Color(0xFF8E8E96);
 
   // ── Label colours ────────────────────────────────────────────
+  // UI audit 2026-11-06 P2-4: code block tokens (were raw hexes in
+  // chat_bubble from a GitHub palette, off the black-box ramp).
+  static const codeBg = Color(0xFF121214);
+  static const codeText = Color(0xFFF2F2F0);
+
   static const uncensored = Color(
     0xFF9333EA,
   ); // red label retired — purple IS the mark

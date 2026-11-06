@@ -27,6 +27,8 @@
 // readout (SpringSimulation toward the target value).
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
+
+import '../../theme/app_colors.dart';
 import 'package:flutter/physics.dart';
 import 'package:flutter/scheduler.dart';
 
@@ -135,27 +137,44 @@ class MinixSwitch extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return GestureDetector(
+    // UI audit 2026-11-06 (P1-7/P1-9, Codex P1-7/P1-11): VoiceOver
+    // gets a toggled button identity, the hit area is 44pt tall
+    // (visual track unchanged), motion snaps under Reduce Motion,
+    // and the track colors read the tokens.
+    final rm = MediaQuery.disableAnimationsOf(context);
+    return Semantics(
+      button: true,
+      toggled: value,
       onTap: () => onChanged(!value),
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 150),
-        width: 44,
-        height: 24,
-        padding: const EdgeInsets.all(2),
-        decoration: BoxDecoration(
-          color: value ? const Color(0xFF9333EA) : const Color(0xFF26262B),
-          borderRadius: BorderRadius.circular(999),
-        ),
-        child: AnimatedAlign(
-          duration: const Duration(milliseconds: 150),
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onTap: () => onChanged(!value),
+        child: SizedBox(
+          height: 44,
+          child: Center(
+            child: AnimatedContainer(
+              duration: rm ? Duration.zero : const Duration(milliseconds: 150),
+              width: 44,
+              height: 24,
+              padding: const EdgeInsets.all(2),
+              decoration: BoxDecoration(
+                color: value ? AppColors.accent : AppColors.darkBorder,
+                borderRadius: BorderRadius.circular(999),
+              ),
+              child: AnimatedAlign(
+                duration:
+                    rm ? Duration.zero : const Duration(milliseconds: 150),
           curve: Curves.easeInOut,
           alignment: value ? Alignment.centerRight : Alignment.centerLeft,
-          child: Container(
-            width: 20,
-            height: 20,
-            decoration: const BoxDecoration(
-              color: Colors.white,
-              shape: BoxShape.circle,
+                child: Container(
+                  width: 20,
+                  height: 20,
+                  decoration: const BoxDecoration(
+                    color: Colors.white,
+                    shape: BoxShape.circle,
+                  ),
+                ),
+              ),
             ),
           ),
         ),

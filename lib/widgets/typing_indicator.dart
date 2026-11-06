@@ -20,7 +20,13 @@ class _TypingIndicatorState extends State<TypingIndicator>
     _controller = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 800),
-    )..repeat(reverse: true);
+    );
+    // UI audit 2026-11-06: static dot under Reduce Motion.
+    if (!MediaQuery.disableAnimationsOf(context)) {
+      _controller.repeat(reverse: true);
+    } else {
+      _controller.value = 1.0;
+    }
     
     _animation = Tween<double>(begin: 0.3, end: 1.0).animate(
       CurvedAnimation(parent: _controller, curve: Curves.easeInOut),

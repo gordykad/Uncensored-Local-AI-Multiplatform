@@ -207,6 +207,11 @@ class _BlurRevealState extends State<BlurReveal>
 
   @override
   Widget build(BuildContext context) {
+    // UI audit 2026-11-06 (Codex P1-11): under Reduce Motion the
+    // reveal renders its end state as plain text, no ticker work.
+    if (MediaQuery.disableAnimationsOf(context)) {
+      return Text(widget.text, style: widget.style);
+    }
     final stagger = 0.03 / widget.speedReveal; // seconds per char
     final dur = 0.3 / widget.speedSegment;
     final chars = widget.text.split('');

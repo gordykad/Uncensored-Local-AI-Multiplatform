@@ -36,6 +36,7 @@ class GlassFolderPack extends StatefulWidget {
 class _GlassFolderPackState extends State<GlassFolderPack> {
   WebViewController? _ctrl;
   bool _ready = false;
+  bool _failed = false;
 
   static const _bridgeScript = '''
 <script>
@@ -85,6 +86,15 @@ class _GlassFolderPackState extends State<GlassFolderPack> {
     final ctrl = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
       ..setBackgroundColor(const Color(0xFF050506))
+      // UI audit 2026-11-06 P2-8: a failed pack load surfaces
+      // instead of leaving a blank frame forever.
+      ..setNavigationDelegate(
+        NavigationDelegate(
+          onWebResourceError: (_) {
+            if (mounted) setState(() => _failed = true);
+          },
+        ),
+      )
       ..addJavaScriptChannel(
         'AstroPack',
         onMessageReceived: (msg) {
@@ -92,7 +102,7 @@ class _GlassFolderPackState extends State<GlassFolderPack> {
             final d = jsonDecode(msg.message) as Map<String, dynamic>;
             if (d['astroPack'] != true) return;
             if (d['type'] == 'ready') {
-              _ready = true;
+              setState(() => _ready = true);
               _sendProps();
             } else if (d['type'] == 'event' && d['name'] == 'onFileSelect') {
               final args = d['args'] as List?;
@@ -135,11 +145,53 @@ class _GlassFolderPackState extends State<GlassFolderPack> {
   Widget build(BuildContext context) {
     final ctrl = _ctrl;
     if (ctrl == null) return const SizedBox(width: 352, height: 404);
-    // Astro OS's folder frame box: 352x404, flex none.
-    return SizedBox(
-      width: 352,
-      height: 404,
-      child: WebViewWidget(controller: ctrl),
+    // Astro OS's folder frame box: 352x404, flex none. UI audit
+    // 2026-11-06 (Codex P2-22): on screens narrower than the frame,
+    // scale the whole frame down instead of clipping it; loading
+    // and failure get a face instead of a blank box (P2-8).
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final scale = constraints.maxWidth < 352
+            ? constraints.maxWidth / 352
+            : 1.0;
+        final frame = SizedBox(
+          width: 352,
+          height: 404,
+          child: Stack(
+            children: [
+              WebViewWidget(controller: ctrl),
+              if (!_ready && !_failed)
+                Container(
+                  color: const Color(0xFF0C0C0E),
+                  alignment: Alignment.center,
+                  child: const Text(
+                    'Loading collection',
+                    style: TextStyle(color: Color(0xFF9C9CA3), fontSize: 12),
+                  ),
+                ),
+              if (_failed)
+                Container(
+                  color: const Color(0xFF0C0C0E),
+                  alignment: Alignment.center,
+                  child: const Text(
+                    'This collection could not load.',
+                    style: TextStyle(color: Color(0xFF9C9CA3), fontSize: 12),
+                  ),
+                ),
+            ],
+          ),
+        );
+        if (scale == 1.0) return frame;
+        return SizedBox(
+          width: constraints.maxWidth,
+          height: 404 * scale,
+          child: FittedBox(
+            fit: BoxFit.scaleDown,
+            alignment: Alignment.topCenter,
+            child: frame,
+          ),
+        );
+      },
     );
   }
 }

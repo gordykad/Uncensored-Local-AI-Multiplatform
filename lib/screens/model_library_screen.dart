@@ -5,6 +5,8 @@ import 'package:get/get.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 
 import '../theme/app_colors.dart';
+import '../theme/app_icons.dart';
+import '../theme/type_scale.dart';
 import '../controllers/model_controller.dart';
 import '../services/model_manager.dart';
 import '../services/model_classifier.dart';
@@ -15,10 +17,9 @@ import '../services/custom_connections_service.dart';
 import '../models/ai_model_info.dart';
 import '../widgets/model_card.dart';
 import '../widgets/glass_folder.dart';
+import '../widgets/tab_header.dart';
 import '../widgets/faithful/gravity.dart';
 import '../widgets/faithful/trace_pickers.dart';
-import '../widgets/faithful/controls_meta.dart';
-import '../widgets/faithful/textfx.dart';
 
 class ModelLibraryScreen extends StatelessWidget {
   final bool embedded;
@@ -106,6 +107,7 @@ class _ModelLibraryBodyState extends State<_ModelLibraryBody> {
   // drives the "From <folder>" bar with the way back to the
   // full page (Kai hit a dead end here on 1.16.0).
   ({String collection, String model})? _folderFocus;
+  int _collectionsPage = 0;
 
   @override
   void dispose() {
@@ -122,50 +124,20 @@ class _ModelLibraryBodyState extends State<_ModelLibraryBody> {
 
     return Column(
       children: [
-        // ── Top bar ──────────────────────────────────
-        Container(
-          padding: EdgeInsets.only(
-            top: widget.showBackButton ? MediaQuery.of(context).padding.top : 0,
-            left: 4,
-            right: 4,
-          ),
-          decoration: BoxDecoration(
-            color: context.bg,
-            border: Border(
-              bottom: BorderSide(color: context.border, width: 0.5),
-            ),
-          ),
-          child: SizedBox(
-            height: 52,
-            child: Row(
-              children: [
-                if (widget.showBackButton)
-                  IconButton(
-                    icon: Icon(Icons.arrow_back_rounded, color: context.text),
-                    onPressed: () => Get.back(),
-                  ),
-                if (!widget.showBackButton) const SizedBox(width: 12),
-                BlurReveal(
-                  text: 'Models',
-                  style: TextStyle(
-                    fontSize: 17,
-                    fontWeight: FontWeight.w600,
-                    color: context.text,
-                  ),
-                ),
-                const Spacer(),
-                _ImportButton(ctrl: ctrl),
-                const SizedBox(width: 8),
-              ],
-            ),
-          ),
+        // ── Top bar (shared TabHeader, audit P2-10) ──
+        TabHeader(
+          title: 'Models',
+          showBackButton: widget.showBackButton,
+          topInset:
+              widget.showBackButton ? MediaQuery.of(context).padding.top : 0,
+          trailing: [_ImportButton(ctrl: ctrl), const SizedBox(width: 8)],
         ),
 
         // ── Search (ticket 08: #6 Search Input Group, live-filters) ──
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
           child: SearchInputGroup(
-            label: 'Models',
+            label: 'Search',
             controller: _searchCtrl,
             hint: 'Search models',
             onChanged: (q) => setState(() => _query = q.trim()),
@@ -173,10 +145,21 @@ class _ModelLibraryBodyState extends State<_ModelLibraryBody> {
         ),
 
         // ── Filter chips ─────────────────────────────
+        // UI audit 2026-11-06 (Claude P3-5): the row scrolls past
+        // the right edge with no cue; a ShaderMask fade on the
+        // trailing edge says there is more.
         Container(
           height: 48,
           padding: const EdgeInsets.symmetric(horizontal: 12),
-          child: ListView(
+          child: ShaderMask(
+            shaderCallback: (rect) => const LinearGradient(
+              begin: Alignment.centerLeft,
+              end: Alignment.centerRight,
+              colors: [Colors.black, Colors.black, Colors.transparent],
+              stops: [0.0, 0.92, 1.0],
+            ).createShader(rect),
+            blendMode: BlendMode.dstIn,
+            child: ListView(
             scrollDirection: Axis.horizontal,
             children: [
               _chip(context, 'All', _Filter.all),
@@ -190,6 +173,7 @@ class _ModelLibraryBodyState extends State<_ModelLibraryBody> {
               _chip(context, 'Reasoning', _Filter.reasoning),
               _chip(context, 'Base', _Filter.base),
             ],
+            ),
           ),
         ),
 
@@ -249,19 +233,25 @@ class _ModelLibraryBodyState extends State<_ModelLibraryBody> {
             }
 
             if (allCatalog.isEmpty) {
+              // UI audit 2026-11-06 (Codex P2-23): an empty catalog
+              // is a state with a next step, not a loading skeleton
+              // that never resolves.
               return Center(
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    const Padding(
-                      padding: EdgeInsets.symmetric(horizontal: 24),
-                      child: ChatThreadSkeleton(),
+                    Text(
+                      'No models yet.',
+                      style: TextStyle(color: context.text, fontSize: 15),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      'Import a GGUF file to get started.',
+                      style: TextStyle(color: context.textD, fontSize: 13),
                     ),
                     const SizedBox(height: 16),
-                    Text(
-                      'No models in catalog.',
-                      style: TextStyle(color: context.textD, fontSize: 14),
-                    ),
+                    // The same import affordance the header carries.
+                    _ImportButton(ctrl: ctrl),
                   ],
                 ),
               );
@@ -272,11 +262,27 @@ class _ModelLibraryBodyState extends State<_ModelLibraryBody> {
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    const GravityStars(height: 150),
+                    TickerMode(
+                      enabled: !RM.off(context),
+                      child: const GravityStars(height: 150),
+                    ),
                     const SizedBox(height: 12),
                     Text(
-                      'No models match this filter.',
+                      _query.isNotEmpty
+                          ? 'No models match "$_query".'
+                          : 'No models match this filter.',
                       style: TextStyle(color: context.textD, fontSize: 14),
+                    ),
+                    const SizedBox(height: 10),
+                    TextButton(
+                      onPressed: () {
+                        _searchCtrl.clear();
+                        setState(() {
+                          _query = '';
+                          _filter = _Filter.all;
+                        });
+                      },
+                      child: const Text('Clear search and filters'),
                     ),
                   ],
                 ),
@@ -301,6 +307,8 @@ class _ModelLibraryBodyState extends State<_ModelLibraryBody> {
                         return PageView.builder(
                           controller: _collectionsPager,
                           itemCount: cols.length,
+                          onPageChanged: (i) =>
+                              setState(() => _collectionsPage = i),
                           itemBuilder: (context, i) {
                             final c = cols[i];
                             return Center(
@@ -314,7 +322,7 @@ class _ModelLibraryBodyState extends State<_ModelLibraryBody> {
                                     (
                                       name: m.name,
                                       meta:
-                                          '${m.sizeGb} GB - ${_quantOf(m.filename)}',
+                                          '${m.sizeGb} GB · ${_quantOf(m.filename)}',
                                     ),
                                 ],
                                 onFileSelect: (idx) {
@@ -342,18 +350,91 @@ class _ModelLibraryBodyState extends State<_ModelLibraryBody> {
                 ],
 
                 // ── Folder focus bar: the way back ──────
+                  // UI audit 2026-11-06 (Claude P2-9, Codex P2-21):
+                  // the pager gets dots + arrows (swipe is not the
+                  // only door), and the caption says plainly that a
+                  // folder previews its latest four while the full
+                  // collection lives in the list below.
+                  Builder(
+                    builder: (context) {
+                      final cols = _collections(allCatalog);
+                      if (cols.length < 2 && cols.isEmpty) {
+                        return const SizedBox.shrink();
+                      }
+                      final count = cols.isEmpty
+                          ? 0
+                          : cols[_collectionsPage.clamp(0, cols.length - 1)]
+                              .models
+                              .length;
+                      return Column(
+                        children: [
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              IconButton(
+                                tooltip: 'Previous collection',
+                                icon: const Icon(Icons.chevron_left_rounded,
+                                    size: 20),
+                                color: context.textM,
+                                onPressed: _collectionsPage > 0
+                                    ? () => _collectionsPager.previousPage(
+                                          duration:
+                                              const Duration(milliseconds: 250),
+                                          curve: Curves.easeOut,
+                                        )
+                                    : null,
+                              ),
+                              for (var i = 0; i < cols.length; i++)
+                                Container(
+                                  width: 6,
+                                  height: 6,
+                                  margin: const EdgeInsets.symmetric(
+                                      horizontal: 3),
+                                  decoration: BoxDecoration(
+                                    shape: BoxShape.circle,
+                                    color: i == _collectionsPage
+                                        ? context.text
+                                        : context.border,
+                                  ),
+                                ),
+                              IconButton(
+                                tooltip: 'Next collection',
+                                icon: const Icon(Icons.chevron_right_rounded,
+                                    size: 20),
+                                color: context.textM,
+                                onPressed: _collectionsPage < cols.length - 1
+                                    ? () => _collectionsPager.nextPage(
+                                          duration:
+                                              const Duration(milliseconds: 250),
+                                          curve: Curves.easeOut,
+                                        )
+                                    : null,
+                              ),
+                            ],
+                          ),
+                          if (count > 4)
+                            Text(
+                              'Folder previews the latest 4 · all $count are in the list below',
+                              style: TextStyle(
+                                  color: context.textD, fontSize: 11),
+                            ),
+                        ],
+                      );
+                    },
+                  ),
+                  const SizedBox(height: 8),
                 if (_folderFocus != null) ...[
                   Container(
                     padding: const EdgeInsets.symmetric(
                       horizontal: 12,
                       vertical: 8,
                     ),
+                    // UI audit 2026-11-06 P2-2: the folder focus bar
+                    // is state, not an action; neutral chrome.
                     decoration: BoxDecoration(
-                      color: AppColors.accent.withValues(alpha: 0.12),
+                      color: context.bgInput,
                       borderRadius: BorderRadius.circular(12),
-                      border: Border.all(
-                        color: AppColors.accent.withValues(alpha: 0.45),
-                      ),
+                      border: Border.all(color: context.border),
                     ),
                     child: Row(
                       children: [
@@ -378,7 +459,9 @@ class _ModelLibraryBodyState extends State<_ModelLibraryBody> {
                               _query = '';
                             });
                           },
-                          child: const Row(
+                          child: ConstrainedBox(
+                            constraints: const BoxConstraints(minHeight: 44),
+                            child: Row(
                             mainAxisSize: MainAxisSize.min,
                             children: [
                               Text(
@@ -390,12 +473,13 @@ class _ModelLibraryBodyState extends State<_ModelLibraryBody> {
                                 ),
                               ),
                               SizedBox(width: 4),
-                              Icon(
-                                Icons.close,
-                                size: 14,
-                                color: AppColors.accentHi,
-                              ),
-                            ],
+                                Icon(
+                                  Icons.close,
+                                  size: 14,
+                                  color: AppColors.accentHi,
+                                ),
+                              ],
+                            ),
                           ),
                         ),
                       ],
@@ -486,8 +570,12 @@ class _ModelLibraryBodyState extends State<_ModelLibraryBody> {
                       ),
                     ],
                   ).animate().fadeIn(
-                    delay: Duration(milliseconds: index * 50),
-                    duration: 250.ms,
+                    // UI audit 2026-11-06 P2-7: no stagger under
+                    // Reduce Motion (zero delay + duration = static).
+                    delay: RM.off(context)
+                        ? Duration.zero
+                        : Duration(milliseconds: index * 50),
+                    duration: RM.off(context) ? Duration.zero : 250.ms,
                   );
                 }),
 
@@ -679,7 +767,9 @@ class _ModelLibraryBodyState extends State<_ModelLibraryBody> {
                 style: TextStyle(
                   fontSize: 11,
                   fontWeight: FontWeight.w600,
-                  color: AppColors.accent,
+                  // UI audit 2026-11-06 P2-5: accent at 11pt is
+                  // 3.8:1; accentHi passes at 4.9:1.
+                  color: AppColors.accentHi,
                 ),
               ),
             ],
@@ -692,13 +782,15 @@ class _ModelLibraryBodyState extends State<_ModelLibraryBody> {
   // Sync build (mesh 0.20): the star flip, shared by seat + node rows.
   Widget _star(BuildContext context, String model, bool fav) {
     return IconButton(
+      // UI audit 2026-11-06: 44pt target + a named favorite toggle.
+      tooltip: fav ? 'Remove from favorites' : 'Add to favorites',
       icon: Icon(
         fav ? Icons.star : Icons.star_border,
         size: 19,
         color: fav ? AppColors.accentHi : context.textD,
       ),
       visualDensity: VisualDensity.compact,
-      constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+      constraints: const BoxConstraints(minWidth: 44, minHeight: 44),
       onPressed: () async {
         TapFx.select();
         final ok = await _meshSvc.setModelFavorite(model, !fav);
@@ -717,21 +809,32 @@ class _ModelLibraryBodyState extends State<_ModelLibraryBody> {
     Color color,
     VoidCallback? onTap,
   ) {
-    return InkWell(
-      borderRadius: BorderRadius.circular(12),
-      onTap: onTap,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+    // UI audit 2026-11-06: pills get a 44pt hit area (visual unchanged).
+    return Semantics(
+      button: onTap != null,
+      label: label,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(12),
+        onTap: onTap,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(minHeight: 44),
+          child: Center(
+            widthFactor: 1,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
         decoration: BoxDecoration(
           border: Border.all(color: color),
           borderRadius: BorderRadius.circular(12),
         ),
-        child: Text(
-          label,
-          style: TextStyle(
-            fontSize: 11,
-            fontWeight: FontWeight.w700,
-            color: color,
+              child: Text(
+                label,
+                style: TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w700,
+                  color: color,
+                ),
+              ),
+            ),
           ),
         ),
       ),
@@ -797,7 +900,7 @@ class _ModelLibraryBodyState extends State<_ModelLibraryBody> {
       // come back (and there is no cache to show), say so out loud.
       if (_meshTried && _meshSvc.catalogFetchedAt == null) {
         return [
-          _sectionTitle(context, 'Mesh - Astro OS lanes via your PC'),
+          _sectionTitle(context, 'Mesh · Astro OS lanes via your PC'),
           const SizedBox(height: 8),
           Container(
             margin: const EdgeInsets.only(bottom: 16),
@@ -808,7 +911,7 @@ class _ModelLibraryBodyState extends State<_ModelLibraryBody> {
               borderRadius: BorderRadius.circular(12),
             ),
             child: Text(
-              'Mesh unreachable at ${_meshSvc.address}. Check Settings, Mesh - and that your PC is on and on the same tailnet.',
+              'Mesh unreachable at ${_meshSvc.address}. Check Settings, Mesh, and that your PC is on and on the same tailnet.',
               style: TextStyle(fontSize: 12, color: context.textM),
             ),
           ),
@@ -817,18 +920,18 @@ class _ModelLibraryBodyState extends State<_ModelLibraryBody> {
       // Catalog is empty but the gateway has answered before: the
       // wake box row still belongs here (asleep is its home state).
       return [
-        _sectionTitle(context, 'Mesh - Astro OS lanes via your PC'),
+        _sectionTitle(context, 'Mesh · Astro OS lanes via your PC'),
         const SizedBox(height: 12),
         _wakeboxAsleepRow(context, ctrl),
         const SizedBox(height: 16),
       ];
     }
     final widgets = <Widget>[
-      _sectionTitle(context, 'Mesh - Astro OS lanes via your PC'),
+      _sectionTitle(context, 'Mesh · Astro OS lanes via your PC'),
       const SizedBox(height: 4),
       Text(
         _meshStale
-            ? 'Cached catalog - your PC mesh is unreachable right now'
+            ? 'Cached catalog · your PC mesh is unreachable right now'
             : 'Live catalog from your PC mesh',
         style: TextStyle(fontSize: 11, color: context.textM),
       ),
@@ -909,20 +1012,33 @@ class _ModelLibraryBodyState extends State<_ModelLibraryBody> {
               'label': s.model,
               'model': s.model,
             },
-            trailing: _star(context, s.model, s.favorite),
+            // UI audit 2026-11-06 (Claude P2-9, Codex P2-17): the
+            // seat options were long-press only; a visible button
+            // opens the same sheet.
+            trailing: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                _star(context, s.model, s.favorite),
+                IconButton(
+                  tooltip: 'Seat options',
+                  icon: Icon(AppIcons.more, size: 20, color: context.textM),
+                  onPressed: () => _seatVerifySheet(context, s),
+                ),
+              ],
+            ),
             title: s.model,
             sub: s.dead
-                ? '${s.lane} - Dead Rn, tap to retry'
+                ? '${s.lane} · Not working, tap to retry'
                 : s.isBlocked && s.blocked != null
-                ? '${s.lane} - ${s.blocked}'
+                ? '${s.lane} · ${s.blocked}'
                 : s.lane,
             badge: s.dead
-                ? 'DEAD RN'
+                ? 'NOT WORKING'
                 : s.isBlocked
                 ? 'BLOCKED'
                 : s.isVerified
                 ? (s.proven ? 'PROVEN' : 'VERIFIED')
-                : 'SMOKE TEST',
+                : 'UNTESTED',
             badgeColor: s.dead || s.isBlocked
                 ? AppColors.red
                 : s.isVerified
@@ -949,7 +1065,7 @@ class _ModelLibraryBodyState extends State<_ModelLibraryBody> {
                       SnackBar(
                         backgroundColor: context.bgPanel,
                         content: Text(
-                          'Retrying ${s.model} - Dead Rn cleared',
+                          'Retrying ${s.model}. Not-working mark cleared',
                           style: TextStyle(color: context.text),
                         ),
                       ),
@@ -1008,7 +1124,7 @@ class _ModelLibraryBodyState extends State<_ModelLibraryBody> {
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  'Each tag is a folder above. Hand-filed models stay where you put them - auto-classifying never overwrites them.',
+                  'Each tag is a folder above. Hand-filed models stay where you put them · auto-classifying never overwrites them.',
                   style: TextStyle(fontSize: 12, color: context.textM),
                 ),
                 const SizedBox(height: 14),
@@ -1043,23 +1159,39 @@ class _ModelLibraryBodyState extends State<_ModelLibraryBody> {
                   ],
                 ),
                 const SizedBox(height: 18),
-                SizedBox(
-                  width: double.infinity,
-                  child: FilledButton(
-                    style: FilledButton.styleFrom(
-                      backgroundColor: AppColors.accent,
+                Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton(
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: context.text,
+                          side: BorderSide(color: context.border),
+                          minimumSize: const Size(0, 44),
+                        ),
+                        onPressed: () => Navigator.of(sheetCtx).pop(),
+                        child: const Text('Cancel'),
+                      ),
                     ),
-                    onPressed: () {
-                      Navigator.of(sheetCtx).pop();
-                      TapFx.select();
-                      final tags = ModelClassifier.tagOrder
-                          .where(selected.contains)
-                          .toList();
-                      Get.find<ModelManager>().setModelTags(model, tags);
-                      setState(() {});
-                    },
-                    child: const Text('Save'),
-                  ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: FilledButton(
+                        style: FilledButton.styleFrom(
+                          backgroundColor: AppColors.accent,
+                          minimumSize: const Size(0, 44),
+                        ),
+                        onPressed: () {
+                          Navigator.of(sheetCtx).pop();
+                          TapFx.select();
+                          final tags = ModelClassifier.tagOrder
+                              .where(selected.contains)
+                              .toList();
+                          Get.find<ModelManager>().setModelTags(model, tags);
+                          setState(() {});
+                        },
+                        child: const Text('Save'),
+                      ),
+                    ),
+                  ],
                 ),
               ],
             ),
@@ -1108,7 +1240,7 @@ class _ModelLibraryBodyState extends State<_ModelLibraryBody> {
                             ? (target
                                   ? '${s.model} marked verified'
                                   : '${s.model} unmarked')
-                            : 'The mesh did not accept the flip - is the PC gateway up?',
+                            : 'The mesh did not accept the flip · is the PC gateway up?',
                         style: TextStyle(color: context.text),
                       ),
                     ),
@@ -1129,13 +1261,13 @@ class _ModelLibraryBodyState extends State<_ModelLibraryBody> {
                 size: 20,
               ),
               title: Text(
-                s.dead ? 'Clear Dead Rn (retry)' : 'Mark Dead Rn',
+                s.dead ? 'Clear not-working mark (retry)' : 'Mark not working',
                 style: TextStyle(fontSize: 14, color: context.text),
               ),
               subtitle: Text(
                 s.dead
-                    ? 'Back in rotation - pick it to smoke-test it again'
-                    : 'Not working right now - park it at the bottom',
+                    ? 'Back in rotation · pick it to smoke-test it again'
+                    : 'Not working right now · park it at the bottom',
                 style: TextStyle(fontSize: 11, color: context.textM),
               ),
               onTap: () async {
@@ -1150,12 +1282,21 @@ class _ModelLibraryBodyState extends State<_ModelLibraryBody> {
                     content: Text(
                       s.dead
                           ? '${s.model} is back in rotation'
-                          : '${s.model} tagged Dead Rn - parked at the bottom',
+                          : '${s.model} marked not working. Parked at the bottom',
                       style: TextStyle(color: context.text),
                     ),
                   ),
                 );
               },
+            ),
+            // Visible way out (Codex P2-18).
+            ListTile(
+              leading: Icon(Icons.close_rounded, color: context.textM, size: 20),
+              title: Text(
+                'Cancel',
+                style: TextStyle(fontSize: 14, color: context.text),
+              ),
+              onTap: () => Navigator.pop(sheetCtx),
             ),
           ],
         ),
@@ -1214,7 +1355,7 @@ class _ModelLibraryBodyState extends State<_ModelLibraryBody> {
           children: [
             ListTile(
               leading: Icon(
-                isPinned ? Icons.push_pin : Icons.push_pin_outlined,
+                AppIcons.pin,
                 color: AppColors.accent,
               ),
               title: Text(
@@ -1295,7 +1436,8 @@ class _ModelLibraryBodyState extends State<_ModelLibraryBody> {
         side: BorderSide(color: selected ? AppColors.accent : context.border),
         showCheckmark: false,
         padding: const EdgeInsets.symmetric(horizontal: 8),
-        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        // UI audit 2026-11-06 P1-7: padded target (was shrinkWrap).
+        materialTapTargetSize: MaterialTapTargetSize.padded,
         visualDensity: VisualDensity.compact,
       ),
     );
@@ -1329,7 +1471,8 @@ class _ModelLibraryBodyState extends State<_ModelLibraryBody> {
           ElevatedButton(
             onPressed: () => ctrl.loadModel(filename),
             style: ElevatedButton.styleFrom(
-              backgroundColor: AppColors.green,
+              // UI audit 2026-11-06 P1-8: action color, not green.
+              backgroundColor: AppColors.accent,
               foregroundColor: Colors.white,
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
               elevation: 0,
@@ -1366,7 +1509,7 @@ class _ModelLibraryBodyState extends State<_ModelLibraryBody> {
   ) {
     final keepNote = model.isCustom
         ? (model.hasRemoteUrl
-              ? '\n\nIt stays in your library — you can redownload it anytime.'
+              ? '\n\nIt stays in your library. You can redownload it anytime.'
               : '\n\nIt stays in your library, but without a download link it cannot be redownloaded.')
         : '';
     Get.dialog(
@@ -1389,7 +1532,7 @@ class _ModelLibraryBodyState extends State<_ModelLibraryBody> {
               Get.back();
             },
             style: ElevatedButton.styleFrom(
-              backgroundColor: AppColors.red,
+              backgroundColor: AppColors.redDeep,
               elevation: 0,
             ),
             child: const Text('Delete', style: TextStyle(color: Colors.white)),
@@ -1432,7 +1575,7 @@ class _ModelLibraryBodyState extends State<_ModelLibraryBody> {
               );
             },
             style: ElevatedButton.styleFrom(
-              backgroundColor: AppColors.red,
+              backgroundColor: AppColors.redDeep,
               elevation: 0,
             ),
             child: const Text('Remove', style: TextStyle(color: Colors.white)),

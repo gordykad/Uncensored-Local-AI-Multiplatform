@@ -26,7 +26,10 @@ import '../services/chatgpt_service.dart';
 import '../services/image_gen_service.dart';
 import '../services/log_service.dart';
 import '../theme/app_colors.dart';
+import '../theme/app_icons.dart';
+import '../theme/type_scale.dart';
 import '../widgets/faithful/orb.dart';
+import '../widgets/tab_header.dart';
 
 class _Item {
   final String prompt;
@@ -42,6 +45,27 @@ class _Item {
   _Item(this.prompt)
       : status = 'pending',
         phase = 'Starting';
+}
+
+/// UI audit 2026-11-06: the result tile used to render the raw
+/// exception (minus its prefix). Map to a plain cause + next step;
+/// the raw error stays in the debug log.
+String _friendlyGenError(Object e) {
+  final raw = e.toString();
+  debugPrint('ImageGen error: $raw');
+  if (raw.contains('SocketException') ||
+      raw.contains('Network') ||
+      raw.contains('timed out') ||
+      raw.contains('Timeout')) {
+    return 'Network error. Check the connection and try again.';
+  }
+  if (raw.contains('401') || raw.contains('403')) {
+    return 'The lane rejected the request. Check the entry or sign-in, then try again.';
+  }
+  if (raw.contains('429')) {
+    return 'The lane is rate limited. Wait a moment and try again.';
+  }
+  return 'Generation failed. Try again, or pick another entry.';
 }
 
 class ImageGenScreen extends StatefulWidget {
@@ -67,15 +91,48 @@ class _ImageGenScreenState extends State<ImageGenScreen>
 
   static const _placeholders = [
     'A lighthouse at dusk, cinematic',
-    'Write a haiku about the ocean at midnight',
     'A portrait in neon rain, 35mm',
     'A cabin in snow under the aurora',
-    'Explain quantum entanglement like I\'m five',
+    'A red fox in fresh snow, wildlife photo',
+    'A vinyl record store at night, moody light',
   ];
   int _phIndex = 0;
   Timer? _phTimer;
 
   bool _loggedBuild = false; // build 18 diagnostics
+
+  // UI audit 2026-11-06 (Codex P1-3): the ChatGPT synthetic entry
+  // must track sign-in state; this tab lives in an IndexedStack and
+  // never re-inits, so build() re-checks and resyncs after the frame.
+  bool _chatGptPresent = false;
+  static const _chatGptEntry = ImageEntry(
+    id: 'chatgpt-images',
+    name: 'ChatGPT',
+    link: '',
+    lane: 'chatgpt',
+    createdMs: 0,
+  );
+
+  /// Local entries plus the ChatGPT row when signed in. Every
+  /// mutation path rebuilds through here so the synthetic row is
+  /// never dropped by a pin/delete refresh.
+  List<ImageEntry> _allEntries() {
+    final base = _svc.localEntries();
+    return _chatGptPresent ? [_chatGptEntry, ...base] : base;
+  }
+
+  void _syncChatGptEntry() {
+    final signedIn = ChatGptService().isSignedIn;
+    if (signedIn == _chatGptPresent || !mounted) return;
+    _chatGptPresent = signedIn;
+    setState(() {
+      _entries = _entries.where((e) => e.id != 'chatgpt-images').toList();
+      if (signedIn) _entries = [_chatGptEntry, ..._entries];
+      if (_current?.id == 'chatgpt-images' && !signedIn) {
+        _current = _entries.isNotEmpty ? _entries.first : null;
+      }
+    });
+  }
 
   void _diag(String msg) {
     try {
@@ -88,22 +145,13 @@ class _ImageGenScreenState extends State<ImageGenScreen>
     _diag('initState start');
     super.initState();
     _beam = AnimationController(
-        vsync: this, duration: const Duration(seconds: 6))
-      ..repeat();
+        vsync: this, duration: const Duration(seconds: 6));
     _entries = _svc.localEntries();
     // Ticket 33: the ChatGPT subscription lane rides as a synthetic
     // entry whenever Kai is signed in - no catalog row, device-local.
-    if (ChatGptService().isSignedIn) {
-      _entries = [
-        const ImageEntry(
-          id: 'chatgpt-images',
-          name: 'ChatGPT',
-          link: '',
-          lane: 'chatgpt',
-          createdMs: 0,
-        ),
-        ..._entries,
-      ];
+    _chatGptPresent = ChatGptService().isSignedIn;
+    if (_chatGptPresent) {
+      _entries = [_chatGptEntry, ..._entries];
     }
     _current = _entries.isNotEmpty ? _entries.first : null;
     _diag('initState entries=${_entries.length} online=${_svc.connectivityOn}');
@@ -113,6 +161,19 @@ class _ImageGenScreenState extends State<ImageGenScreen>
       setState(() => _phIndex = (_phIndex + 1) % _placeholders.length);
     });
     if (_svc.connectivityOn) _loadPinned();
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // UI audit 2026-11-06 P2-7: the hero beam loop honors Reduce
+    // Motion (it is driven from this State, so the gate lives here,
+    // not in a TickerMode below).
+    if (RM.off(context)) {
+      _beam.stop();
+    } else if (!_beam.isAnimating) {
+      _beam.repeat();
+    }
   }
 
   Future<void> _loadPinned() async {
@@ -199,7 +260,7 @@ class _ImageGenScreenState extends State<ImageGenScreen>
         );
       } catch (e) {
         item.status = 'error';
-        item.error = e.toString().replaceFirst('Exception: ', '');
+        item.error = _friendlyGenError(e);
       }
       if (mounted) setState(() {});
     }
@@ -247,7 +308,7 @@ class _ImageGenScreenState extends State<ImageGenScreen>
       item.status = 'done';
     } catch (e) {
       item.status = 'error';
-      item.error = e.toString().replaceFirst('Exception: ', '');
+      item.error = _friendlyGenError(e);
     }
     if (mounted) {
       setState(() {
@@ -265,7 +326,10 @@ class _ImageGenScreenState extends State<ImageGenScreen>
     if (_busy) return;
     final vids = _entries.where((e) => e.isVideo).toList();
     if (vids.isEmpty) {
-      _toast('Add a video entry first - RunPod lane, Video kind');
+      // UI audit 2026-11-06 P2-6: a dead-end toast becomes the
+      // action itself; the sheet opens on the spot.
+      _toast('No video entry yet. Add one to continue.');
+      _openAdd();
       return;
     }
     final src = await showModalBottomSheet<String>(
@@ -376,7 +440,10 @@ class _ImageGenScreenState extends State<ImageGenScreen>
     if (src.bytes == null || _busy) return;
     final vids = _entries.where((e) => e.isVideo).toList();
     if (vids.isEmpty) {
-      _toast('Add a video entry first - RunPod lane, Video kind');
+      // UI audit 2026-11-06 P2-6: a dead-end toast becomes the
+      // action itself; the sheet opens on the spot.
+      _toast('No video entry yet. Add one to continue.');
+      _openAdd();
       return;
     }
     final entry = (_current?.isVideo ?? false) ? _current! : vids.first;
@@ -407,9 +474,19 @@ class _ImageGenScreenState extends State<ImageGenScreen>
     // froze mid-dissolve on long prompts, trapping the submit behind
     // the animation. Sending is direct now: capture, clear, generate.
     if (_busy) return;
-    final text = _input.text.trim().isEmpty
-        ? _placeholders[_phIndex]
-        : _input.text.trim();
+    // UI audit 2026-11-06 (Codex P1-4/P3-33): validate BEFORE
+    // clearing. The old flow cleared the field and then _generate
+    // returned silently with no entry picked, eating the prompt;
+    // an empty field also used to submit the rotating example.
+    if (_current == null) {
+      _toast('Pick a model first. Your prompt is still in the field.');
+      return;
+    }
+    final text = _input.text.trim();
+    if (text.isEmpty) {
+      _toast('Type a prompt first.');
+      return;
+    }
     _input.clear();
     _generate(text);
   }
@@ -419,6 +496,11 @@ class _ImageGenScreenState extends State<ImageGenScreen>
     if (!_loggedBuild) {
       _loggedBuild = true;
       _diag('first build');
+    }
+    if (ChatGptService().isSignedIn != _chatGptPresent) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _syncChatGptEntry();
+      });
     }
     final online = _online;
     // Keyboard open: the hero card collapses out of the way. With it
@@ -441,46 +523,49 @@ class _ImageGenScreenState extends State<ImageGenScreen>
   }
 
   Widget _header(bool online) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(18, 14, 12, 6),
-      child: Row(
-        children: [
-          const Text('Image Gen',
-              style: TextStyle(
-                  color: AppColors.darkText,
-                  fontSize: 19,
-                  fontWeight: FontWeight.w600)),
-          const Spacer(),
-          GestureDetector(
+    // UI audit 2026-11-06 (Claude P2-10): the shared 52pt bordered
+    // TabHeader, same as Models and Settings; the connectivity pill
+    // rides as the trailing action.
+    return TabHeader(
+      title: 'Image Gen',
+      trailing: [
+        Semantics(
+          button: true,
+          toggled: online,
+          label: 'Connectivity',
+          child: GestureDetector(
             onTap: () {
               setState(() => _svc.connectivityOn = !online);
               if (!online) _loadPinned();
             },
             child: Container(
+              constraints: const BoxConstraints(minHeight: 44),
+              alignment: Alignment.center,
               padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 6),
-              decoration: BoxDecoration(
-                color: AppColors.darkBgPanel,
-                border: Border.all(color: AppColors.darkBorder),
-                borderRadius: BorderRadius.circular(99),
-              ),
-              child: Row(mainAxisSize: MainAxisSize.min, children: [
-                Container(
-                  width: 7,
-                  height: 7,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    color: online ? AppColors.green : AppColors.red,
-                  ),
+            decoration: BoxDecoration(
+              color: AppColors.darkBgPanel,
+              border: Border.all(color: AppColors.darkBorder),
+              borderRadius: BorderRadius.circular(99),
+            ),
+            child: Row(mainAxisSize: MainAxisSize.min, children: [
+              Container(
+                width: 7,
+                height: 7,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: online ? AppColors.green : AppColors.red,
                 ),
+              ),
                 const SizedBox(width: 7),
-                Text(online ? 'Connected' : 'Offline',
+                Text(online ? 'Connectivity on' : 'Connectivity off',
                     style: const TextStyle(
                         color: AppColors.darkTextM, fontSize: 12)),
               ]),
             ),
           ),
-        ],
-      ),
+        ),
+        const SizedBox(width: 6),
+      ],
     );
   }
 
@@ -489,20 +574,49 @@ class _ImageGenScreenState extends State<ImageGenScreen>
       child: Center(
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 36),
-          child: Column(mainAxisSize: MainAxisSize.min, children: const [
-            Icon(Icons.cloud_off_rounded,
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            const Icon(Icons.cloud_off_rounded,
                 color: AppColors.darkTextD, size: 40),
-            SizedBox(height: 14),
-            Text('Image generation is off',
+            const SizedBox(height: 14),
+            const Text('Image generation is off',
                 style: TextStyle(
                     color: AppColors.darkText,
                     fontSize: 16,
                     fontWeight: FontWeight.w600)),
-            SizedBox(height: 8),
-            Text(
+            const SizedBox(height: 8),
+            const Text(
               'Turn on Connectivity to use the hosted lanes. Your local models are unaffected.',
               textAlign: TextAlign.center,
-              style: TextStyle(color: AppColors.darkTextM, fontSize: 13.5, height: 1.5),
+              style: TextStyle(
+                  color: AppColors.darkTextM, fontSize: 13.5, height: 1.5),
+            ),
+            const SizedBox(height: 18),
+            // UI audit 2026-11-06 (Claude P2-8, Codex P1-14): the
+            // veil gets its own actions. Previous Gens is local
+            // content; connectivity must never gate it.
+            FilledButton(
+              onPressed: () {
+                setState(() => _svc.connectivityOn = true);
+                _loadPinned();
+              },
+              style: FilledButton.styleFrom(
+                backgroundColor: AppColors.accent,
+                minimumSize: const Size(180, 44),
+              ),
+              child: const Text('Turn on Connectivity'),
+            ),
+            const SizedBox(height: 10),
+            OutlinedButton(
+              onPressed: () => Navigator.of(context).push(
+                MaterialPageRoute(
+                    builder: (_) => const GenGalleryScreen()),
+              ),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: AppColors.darkText,
+                side: const BorderSide(color: AppColors.darkBorder),
+                minimumSize: const Size(180, 44),
+              ),
+              child: const Text('Previous Gens'),
             ),
           ]),
         ),
@@ -519,7 +633,11 @@ class _ImageGenScreenState extends State<ImageGenScreen>
     return Padding(
       padding: const EdgeInsets.fromLTRB(18, 8, 18, 4),
       child: Center(
-        child: AnimatedBuilder(
+        child: TickerMode(
+          // The orb's own tickers live in this subtree: frozen under
+          // Reduce Motion (the beam is gated in didChangeDependencies).
+          enabled: !RM.off(context),
+          child: AnimatedBuilder(
           animation: _beam,
           builder: (_, __) => CustomPaint(
             painter: _BeamPainter(_beam.value),
@@ -539,6 +657,7 @@ class _ImageGenScreenState extends State<ImageGenScreen>
               ]),
             ),
           ),
+          ),
         ),
       ),
     );
@@ -551,7 +670,14 @@ class _ImageGenScreenState extends State<ImageGenScreen>
     return Stack(
       clipBehavior: Clip.hardEdge,
       children: [
-        const Positioned.fill(child: _SparklesField()),
+        // UI audit 2026-11-06: the sparkle field is a repeating
+        // ambient loop; frozen under Reduce Motion.
+        Positioned.fill(
+          child: TickerMode(
+            enabled: !RM.off(context),
+            child: const _SparklesField(),
+          ),
+        ),
         if (_items.isEmpty)
           const Center(
             child: Text('Describe an image to begin',
@@ -578,9 +704,13 @@ class _ImageGenScreenState extends State<ImageGenScreen>
           child: Container(
             constraints: const BoxConstraints(maxWidth: 290),
             padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 9),
-            decoration: const BoxDecoration(
-              color: AppColors.accent,
-              borderRadius: BorderRadius.only(
+            // UI audit 2026-11-06 P2-2: the user's own prompt is
+            // content, not the screen's action; panel fill like the
+            // Chat tab's treatment of user text.
+            decoration: BoxDecoration(
+              color: AppColors.darkBgInput,
+              border: Border.all(color: AppColors.darkBorder),
+              borderRadius: const BorderRadius.only(
                 topLeft: Radius.circular(16),
                 topRight: Radius.circular(16),
                 bottomLeft: Radius.circular(16),
@@ -588,7 +718,8 @@ class _ImageGenScreenState extends State<ImageGenScreen>
               ),
             ),
             child: Text(item.prompt,
-                style: const TextStyle(color: Colors.white, fontSize: 13.5)),
+                style: const TextStyle(
+                    color: AppColors.darkText, fontSize: 13.5)),
           ),
         ),
         const SizedBox(height: 8),
@@ -648,30 +779,37 @@ class _ImageGenScreenState extends State<ImageGenScreen>
               ),
             ),
             const SizedBox(height: 6),
-            Row(children: [
-              Text(
-                '1024 x 1024${item.seed != null ? ' - seed ${item.seed}' : ''}',
-                style: const TextStyle(
-                    color: AppColors.darkTextD, fontSize: 11.5),
-              ),
-              const Spacer(),
-              TextButton(
-                onPressed: () => _save(item),
-                child: const Text('Save',
-                    style: TextStyle(color: AppColors.accentHi, fontSize: 12.5)),
-              ),
-              if (_entries.any((e) => e.isVideo))
+            // UI audit 2026-11-06 (Codex P2-20): metadata and
+            // actions no longer fight for one row; actions wrap.
+            Text(
+              '1024 x 1024${item.seed != null ? ' · seed ${item.seed}' : ''}',
+              style: const TextStyle(
+                  color: AppColors.darkTextD, fontSize: 11.5),
+            ),
+            Wrap(
+              alignment: WrapAlignment.end,
+              children: [
                 TextButton(
-                  onPressed: _busy ? null : () => _animate(item),
-                  child: const Text('Animate',
-                      style: TextStyle(color: AppColors.accentHi, fontSize: 12.5)),
+                  onPressed: () => _save(item),
+                  child: const Text('Save',
+                      style: TextStyle(
+                          color: AppColors.darkTextM, fontSize: 12.5)),
                 ),
-              TextButton(
-                onPressed: _busy ? null : () => _generate('${item.prompt} '),
-                child: const Text('Re-roll',
-                    style: TextStyle(color: AppColors.accentHi, fontSize: 12.5)),
-              ),
-            ]),
+                if (_entries.any((e) => e.isVideo))
+                  TextButton(
+                    onPressed: _busy ? null : () => _animate(item),
+                    child: const Text('Animate',
+                        style: TextStyle(
+                            color: AppColors.darkTextM, fontSize: 12.5)),
+                  ),
+                TextButton(
+                  onPressed: _busy ? null : () => _generate('${item.prompt} '),
+                  child: const Text('Re-roll',
+                      style: TextStyle(
+                          color: AppColors.darkTextM, fontSize: 12.5)),
+                ),
+              ],
+            ),
           ]),
       ]),
     );
@@ -687,121 +825,149 @@ class _ImageGenScreenState extends State<ImageGenScreen>
       await f.writeAsBytes(item.bytes!);
       _toast('Saved to app files');
     } catch (e) {
-      _toast('Save failed: $e');
+      _toast('Save failed. The image stays available in Previous Gens.');
     }
   }
 
   Widget _pickerRow() {
     final e = _current;
+    // UI audit 2026-11-06 (Codex P1-1): the old single row (pill +
+    // stepper + three icon buttons sharing one line) overflowed a
+    // phone width with ordinary entry names. The pill now flexes on
+    // row one with the stepper; the icon actions get their own row.
     return Padding(
       padding: const EdgeInsets.fromLTRB(14, 2, 14, 8),
-      child: Row(children: [
-        GestureDetector(
-          onTap: _openPicker,
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 9),
-            decoration: BoxDecoration(
-              color: AppColors.darkBgPanel,
-              border: Border.all(color: AppColors.darkBorder),
-              borderRadius: BorderRadius.circular(99),
-            ),
-            child: Row(mainAxisSize: MainAxisSize.min, children: [
-              const Icon(Icons.auto_awesome_rounded,
-                  size: 15, color: AppColors.accentHi),
-              const SizedBox(width: 8),
-              ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 170),
-                child: Text(e?.name ?? 'No model',
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                        color: AppColors.darkText, fontSize: 13)),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Row(children: [
+            Expanded(
+              child: Semantics(
+                button: true,
+                label: 'Choose model, current: ${e?.name ?? 'none'}',
+                child: GestureDetector(
+                  onTap: _openPicker,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 13, vertical: 9),
+                    decoration: BoxDecoration(
+                      color: AppColors.darkBgPanel,
+                      border: Border.all(color: AppColors.darkBorder),
+                      borderRadius: BorderRadius.circular(99),
+                    ),
+                    child: Row(mainAxisSize: MainAxisSize.min, children: [
+                      const Icon(Icons.auto_awesome_rounded,
+                          size: 15, color: AppColors.accentHi),
+                      const SizedBox(width: 8),
+                      Flexible(
+                        child: Text(e?.name ?? 'No model',
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                                color: AppColors.darkText, fontSize: 13)),
+                      ),
+                      const SizedBox(width: 8),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 7, vertical: 2.5),
+                        decoration: BoxDecoration(
+                          // Lane badge is metadata, not an action.
+                          color: AppColors.darkBgHover,
+                          borderRadius: BorderRadius.circular(99),
+                        ),
+                        child: Text(
+                          e == null
+                              ? 'none'
+                              : (e.isChatGpt
+                                  ? 'Subscription'
+                                  : e.isRunpod
+                                      ? 'RunPod'
+                                      : 'Hosted'),
+                          style: const TextStyle(
+                              color: AppColors.darkTextM, fontSize: 10.5),
+                        ),
+                      ),
+                      const SizedBox(width: 4),
+                      const Icon(Icons.expand_more_rounded,
+                          size: 16, color: AppColors.darkTextM),
+                    ]),
+                  ),
+                ),
               ),
+            ),
+            if (e != null && !e.isVideo) ...[
               const SizedBox(width: 8),
               Container(
                 padding:
-                    const EdgeInsets.symmetric(horizontal: 7, vertical: 2.5),
+                    const EdgeInsets.symmetric(horizontal: 2, vertical: 0),
                 decoration: BoxDecoration(
-                  color: AppColors.accent.withOpacity(0.14),
+                  color: AppColors.darkBgPanel,
+                  border: Border.all(color: AppColors.darkBorder),
                   borderRadius: BorderRadius.circular(99),
                 ),
-                child: Text(
-                  e == null ? 'none' : (e.isRunpod ? 'RunPod' : 'Hosted'),
-                  style: const TextStyle(
-                      color: AppColors.accentHi, fontSize: 10.5),
-                ),
+                child: Row(mainAxisSize: MainAxisSize.min, children: [
+                  IconButton(
+                    onPressed: _batch > 1
+                        ? () => setState(() => _batch--)
+                        : null,
+                    icon: const Icon(Icons.remove_rounded, size: 15),
+                    color: AppColors.darkTextM,
+                    disabledColor: AppColors.darkTextD,
+                    padding: EdgeInsets.zero,
+                    // UI audit 2026-11-06 P1-7: 44pt stepper targets.
+                    constraints:
+                        const BoxConstraints(minWidth: 44, minHeight: 44),
+                    tooltip: 'Fewer',
+                  ),
+                  Text('x$_batch',
+                      style: const TextStyle(
+                          color: AppColors.darkText, fontSize: 12.5)),
+                  IconButton(
+                    onPressed: _batch < 20
+                        ? () => setState(() => _batch++)
+                        : null,
+                    icon: const Icon(Icons.add_rounded, size: 15),
+                    color: AppColors.darkTextM,
+                    disabledColor: AppColors.darkTextD,
+                    padding: EdgeInsets.zero,
+                    constraints:
+                        const BoxConstraints(minWidth: 44, minHeight: 44),
+                    tooltip: 'More',
+                  ),
+                ]),
               ),
-              const SizedBox(width: 4),
-              const Icon(Icons.expand_more_rounded,
-                  size: 16, color: AppColors.darkTextM),
-            ]),
-          ),
-        ),
-        const Spacer(),
-        if (e != null && !e.isVideo) ...[
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
-            decoration: BoxDecoration(
-              color: AppColors.darkBgPanel,
-              border: Border.all(color: AppColors.darkBorder),
-              borderRadius: BorderRadius.circular(99),
-            ),
-            child: Row(mainAxisSize: MainAxisSize.min, children: [
+            ],
+          ]),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.end,
+            children: [
+              // Animate a picture: bring a still in from Photos or
+              // Previous Gens (Kai, 2026-11-04).
               IconButton(
-                onPressed: _batch > 1
-                    ? () => setState(() => _batch--)
-                    : null,
-                icon: const Icon(Icons.remove_rounded, size: 15),
-                color: AppColors.darkTextM,
-                disabledColor: AppColors.darkTextD,
-                padding: EdgeInsets.zero,
-                constraints:
-                    const BoxConstraints(minWidth: 26, minHeight: 26),
-                tooltip: 'Fewer',
+                onPressed: _animatePicture,
+                icon: const Icon(Icons.add_photo_alternate_outlined,
+                    size: 19, color: AppColors.darkTextM),
+                tooltip: 'Animate a picture',
               ),
-              Text('x$_batch',
-                  style: const TextStyle(
-                      color: AppColors.darkText, fontSize: 12.5)),
+              // Previous Gens lives HERE, inside the studio (Kai,
+              // 2026-11-04: not a dock tab of its own).
               IconButton(
-                onPressed: _batch < 20
-                    ? () => setState(() => _batch++)
-                    : null,
-                icon: const Icon(Icons.add_rounded, size: 15),
-                color: AppColors.darkTextM,
-                disabledColor: AppColors.darkTextD,
-                padding: EdgeInsets.zero,
-                constraints:
-                    const BoxConstraints(minWidth: 26, minHeight: 26),
-                tooltip: 'More',
+                onPressed: () => Navigator.of(context).push(
+                    MaterialPageRoute(
+                        builder: (_) => const GenGalleryScreen())),
+                icon: const Icon(Icons.photo_library_rounded,
+                    size: 19, color: AppColors.darkTextM),
+                tooltip: 'Previous Gens',
               ),
-            ]),
+              IconButton(
+                onPressed: _openRunpodSettings,
+                icon: const Icon(Icons.tune_rounded,
+                    size: 19, color: AppColors.darkTextM),
+                tooltip: 'Lane settings',
+              ),
+            ],
           ),
-          const SizedBox(width: 2),
         ],
-        // Animate a picture: bring a still in from Photos or Previous
-        // Gens (Kai, 2026-11-04: the thread-only Animate button left
-        // no way to add a picture).
-        IconButton(
-          onPressed: _animatePicture,
-          icon: const Icon(Icons.add_photo_alternate_outlined,
-              size: 19, color: AppColors.darkTextM),
-          tooltip: 'Animate a picture',
-        ),
-        // Previous Gens lives HERE, inside the studio (Kai, 2026-11-04:
-        // not a dock tab of its own).
-        IconButton(
-          onPressed: () => Navigator.of(context).push(MaterialPageRoute(
-              builder: (_) => const GenGalleryScreen())),
-          icon: const Icon(Icons.photo_library_rounded,
-              size: 19, color: AppColors.darkTextM),
-          tooltip: 'Previous Gens',
-        ),
-        IconButton(
-          onPressed: _openRunpodSettings,
-          icon: const Icon(Icons.tune_rounded,
-              size: 19, color: AppColors.darkTextM),
-          tooltip: 'Lane settings',
-        ),
-      ]),
+      ),
     );
   }
 
@@ -834,7 +1000,11 @@ class _ImageGenScreenState extends State<ImageGenScreen>
                 if (_input.text.isEmpty)
                   IgnorePointer(
                     child: AnimatedSwitcher(
-                      duration: const Duration(milliseconds: 350),
+                      // UI audit 2026-11-06: no slide under Reduce
+                      // Motion; the example swaps instantly.
+                      duration: RM.off(context)
+                          ? Duration.zero
+                          : const Duration(milliseconds: 350),
                       transitionBuilder: (child, anim) => FadeTransition(
                         opacity: anim,
                         child: SlideTransition(
@@ -855,21 +1025,37 @@ class _ImageGenScreenState extends State<ImageGenScreen>
                   ),
               ]),
             ),
-            GestureDetector(
-              onTap: _busy ? null : _send,
-              child: Container(
-                width: 36,
-                height: 36,
-                decoration: BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: _busy
-                      ? AppColors.darkBgHover
-                      : AppColors.accent,
-                ),
-                child: Icon(
-                  _busy ? Icons.hourglass_top_rounded : Icons.arrow_upward_rounded,
-                  color: Colors.white,
-                  size: 18,
+            // UI audit 2026-11-06: 44pt hit area (circle stays 36),
+            // a VoiceOver name, and a dimmed state when no model is
+            // picked (the tap explains instead of eating the prompt).
+            Semantics(
+              button: true,
+              label: 'Generate',
+              enabled: !_busy,
+              child: GestureDetector(
+                onTap: _busy ? null : _send,
+                child: SizedBox(
+                  width: 44,
+                  height: 44,
+                  child: Center(
+                    child: Container(
+                      width: 36,
+                      height: 36,
+                      decoration: BoxDecoration(
+                        shape: BoxShape.circle,
+                        color: _busy || _current == null
+                            ? AppColors.darkBgHover
+                            : AppColors.accent,
+                      ),
+                      child: Icon(
+                        _busy
+                            ? Icons.hourglass_top_rounded
+                            : Icons.arrow_upward_rounded,
+                        color: Colors.white,
+                        size: 18,
+                      ),
+                    ),
+                  ),
                 ),
               ),
             ),
@@ -888,54 +1074,93 @@ class _ImageGenScreenState extends State<ImageGenScreen>
       ),
       builder: (sheetCtx) => SafeArea(
         child: Column(mainAxisSize: MainAxisSize.min, children: [
-          const Padding(
-            padding: EdgeInsets.fromLTRB(18, 16, 18, 6),
-            child: Align(
-              alignment: Alignment.centerLeft,
-              child: Text('Models',
-                  style: TextStyle(
-                      color: AppColors.darkText,
-                      fontSize: 15,
-                      fontWeight: FontWeight.w600)),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(18, 16, 10, 6),
+            child: Row(
+              children: [
+                const Expanded(
+                  child: Text('Models',
+                      style: TextStyle(
+                          color: AppColors.darkText,
+                          fontSize: 15,
+                          fontWeight: FontWeight.w600)),
+                ),
+                // UI audit 2026-11-06 (Codex P2-18): every sheet gets
+                // a visible way out, not just the scrim.
+                IconButton(
+                  tooltip: 'Close',
+                  icon: const Icon(Icons.close_rounded,
+                      size: 19, color: AppColors.darkTextM),
+                  onPressed: () => Navigator.of(sheetCtx).pop(),
+                ),
+              ],
             ),
           ),
-          for (final e in _entries)
-            ListTile(
-              dense: true,
-              leading: Icon(
-                e.id == _current?.id
-                    ? Icons.check_circle_rounded
-                    : Icons.circle_outlined,
-                color: e.id == _current?.id
-                    ? AppColors.accentHi
-                    : AppColors.darkTextD,
-                size: 19,
-              ),
-              title: Text(e.name,
-                  style: const TextStyle(
-                      color: AppColors.darkText, fontSize: 13.5)),
-              subtitle: Text(
-                e.isVideo
-                    ? 'RunPod video - your endpoint only'
-                    : e.isRunpod
-                        ? 'RunPod - your endpoint only'
-                        : (e.remote ? 'Hosted - pinned by you' : 'Hosted'),
-                style: const TextStyle(
-                    color: AppColors.darkTextD, fontSize: 11.5),
-              ),
-              trailing: (e.pinned && !e.remote)
-                  ? const Icon(Icons.push_pin_rounded,
-                      size: 15, color: AppColors.accentHi)
-                  : null,
-              onTap: () {
-                setState(() => _current = e);
-                Navigator.of(sheetCtx).pop();
-              },
-              onLongPress: () {
-                Navigator.of(sheetCtx).pop();
-                _entryActions(e);
-              },
+          // UI audit 2026-11-06 (Codex P2-19): the entry list
+          // scrolls; it can no longer push the sheet off-screen.
+          Flexible(
+            child: ListView(
+              shrinkWrap: true,
+              children: [
+                for (final e in _entries)
+                  ListTile(
+                    dense: true,
+                    leading: Icon(
+                      e.id == _current?.id
+                          ? AppIcons.checkCircle
+                          : Icons.circle_outlined,
+                      color: e.id == _current?.id
+                          ? AppColors.accentHi
+                          : AppColors.darkTextD,
+                      size: 19,
+                    ),
+                    title: Text(e.name,
+                        style: const TextStyle(
+                            color: AppColors.darkText, fontSize: 13.5)),
+                    subtitle: Text(
+                      e.isVideo
+                          ? 'RunPod video · your endpoint only'
+                          : e.isRunpod
+                              ? 'RunPod · your endpoint only'
+                              : (e.remote
+                                  ? 'Hosted · pinned by you'
+                                  : 'Hosted'),
+                      style: const TextStyle(
+                          color: AppColors.darkTextD, fontSize: 11.5),
+                    ),
+                    trailing: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        if (e.pinned && !e.remote)
+                          const Icon(AppIcons.pin,
+                              size: 15, color: AppColors.accentHi),
+                        // UI audit 2026-11-06 (Codex P2-17): entry
+                        // actions get a visible button; long-press
+                        // is no longer the only door.
+                        if (e.id != 'chatgpt-images')
+                          IconButton(
+                            tooltip: 'Entry options',
+                            icon: const Icon(Icons.more_horiz_rounded,
+                                size: 19, color: AppColors.darkTextM),
+                            onPressed: () {
+                              Navigator.of(sheetCtx).pop();
+                              _entryActions(e);
+                            },
+                          ),
+                      ],
+                    ),
+                    onTap: () {
+                      setState(() => _current = e);
+                      Navigator.of(sheetCtx).pop();
+                    },
+                    onLongPress: () {
+                      Navigator.of(sheetCtx).pop();
+                      _entryActions(e);
+                    },
+                  ),
+              ],
             ),
+          ),
           const Divider(color: AppColors.darkBorderFaint, height: 1),
           ListTile(
             dense: true,
@@ -943,7 +1168,7 @@ class _ImageGenScreenState extends State<ImageGenScreen>
                 color: AppColors.accentHi, size: 19),
             title: const Text('Add entry',
                 style: TextStyle(color: AppColors.darkText, fontSize: 13.5)),
-            subtitle: const Text('Paste a link - validated before it is added',
+            subtitle: const Text('Paste a link · validated before it is added',
                 style: TextStyle(color: AppColors.darkTextD, fontSize: 11.5)),
             onTap: () {
               Navigator.of(sheetCtx).pop();
@@ -983,7 +1208,7 @@ class _ImageGenScreenState extends State<ImageGenScreen>
           if (!e.isRunpod)
             ListTile(
               dense: true,
-              leading: const Icon(Icons.push_pin_rounded,
+              leading: const Icon(AppIcons.pin,
                   color: AppColors.accentHi, size: 19),
               title: Text(e.pinned ? 'Unpin' : 'Pin to all profiles',
                   style: const TextStyle(
@@ -994,9 +1219,9 @@ class _ImageGenScreenState extends State<ImageGenScreen>
                       TextStyle(color: AppColors.darkTextD, fontSize: 11.5)),
               onTap: () {
                 _svc.setPinned(e.id, !e.pinned);
-                setState(() => _entries = _svc.localEntries());
+                setState(() => _entries = _allEntries());
                 Navigator.of(sheetCtx).pop();
-                _toast(e.pinned ? 'Unpinned' : 'Pinned - it will publish to all profiles');
+                _toast(e.pinned ? 'Unpinned' : 'Pinned. It will publish to all profiles');
               },
             ),
           ListTile(
@@ -1005,15 +1230,43 @@ class _ImageGenScreenState extends State<ImageGenScreen>
                 const Icon(Icons.delete_outline_rounded, color: AppColors.red, size: 19),
             title: const Text('Delete entry',
                 style: TextStyle(color: AppColors.red, fontSize: 13.5)),
-            onTap: () {
+            onTap: () async {
+              Navigator.of(sheetCtx).pop();
+              // UI audit 2026-11-06 P1-5: irreversible deletes
+              // confirm first, same pattern as chats and models.
+              final sure = await showDialog<bool>(
+                context: context,
+                builder: (dCtx) => AlertDialog(
+                  backgroundColor: AppColors.darkBgPanel,
+                  title: const Text('Delete entry?',
+                      style: TextStyle(color: AppColors.darkText)),
+                  content: Text(
+                    '"${e.name}" will be removed from this phone.',
+                    style: const TextStyle(
+                        color: AppColors.darkTextM, fontSize: 13),
+                  ),
+                  actions: [
+                    TextButton(
+                      onPressed: () => Navigator.of(dCtx).pop(false),
+                      child: const Text('Cancel'),
+                    ),
+                    FilledButton(
+                      style: FilledButton.styleFrom(
+                          backgroundColor: AppColors.redDeep),
+                      onPressed: () => Navigator.of(dCtx).pop(true),
+                      child: const Text('Delete'),
+                    ),
+                  ],
+                ),
+              );
+              if (sure != true || !mounted) return;
               _svc.removeEntry(e.id);
               setState(() {
-                _entries = _svc.localEntries();
+                _entries = _allEntries();
                 if (_current?.id == e.id) {
                   _current = _entries.isNotEmpty ? _entries.first : null;
                 }
               });
-              Navigator.of(sheetCtx).pop();
             },
           ),
           const SizedBox(height: 8),
@@ -1093,13 +1346,17 @@ class _ImageGenScreenState extends State<ImageGenScreen>
             ),
             TextField(
               controller: link,
+              autocorrect: false,
+              enableSuggestions: false,
+              textCapitalization: TextCapitalization.none,
+              keyboardType: TextInputType.url,
               style: const TextStyle(color: AppColors.darkText, fontSize: 14),
               decoration: InputDecoration(
                 labelText: lane != 'runpod'
-                    ? 'Space - paste the full link or user/space'
+                    ? 'Space · paste the full link or user/space'
                     : kind == 'video'
-                        ? 'LoRA repo - HF link (the Wan base is built in)'
-                        : 'HF repo - paste the full link or user/model',
+                        ? 'LoRA repo · HF link (the Wan base is built in)'
+                        : 'HF repo · paste the full link or user/model',
                 labelStyle:
                     const TextStyle(color: AppColors.darkTextM, fontSize: 13),
                 enabledBorder: const UnderlineInputBorder(
@@ -1143,6 +1400,11 @@ class _ImageGenScreenState extends State<ImageGenScreen>
                         final (err, endpoint, fnIndex) = await _svc.validate(
                             lane, link.text.trim(),
                             kind: lane == 'runpod' ? kind : 'image');
+                        // UI audit 2026-11-06 (Codex P1-13): if the
+                        // sheet was dismissed while validating, stop.
+                        // No setSheet, no commit, no pop on a dead
+                        // context.
+                        if (!sheetCtx.mounted) return;
                         if (err != null) {
                           setSheet(() {
                             checking = false;
@@ -1164,7 +1426,7 @@ class _ImageGenScreenState extends State<ImageGenScreen>
                         _svc.addEntry(e);
                         if (!mounted) return;
                         setState(() {
-                          _entries = _svc.localEntries();
+                          _entries = _allEntries();
                           _current = e;
                         });
                         Navigator.of(sheetCtx).pop();
@@ -1173,6 +1435,11 @@ class _ImageGenScreenState extends State<ImageGenScreen>
                 child: Text(checking ? 'Validating...' : 'Validate & add',
                     style: const TextStyle(color: Colors.white, fontSize: 14)),
               ),
+            ),
+            TextButton(
+              onPressed: () => Navigator.of(sheetCtx).pop(),
+              child: const Text('Cancel',
+                  style: TextStyle(color: AppColors.darkTextM, fontSize: 13)),
             ),
           ]),
         ),
@@ -1196,7 +1463,7 @@ class _ImageGenScreenState extends State<ImageGenScreen>
         child: Column(mainAxisSize: MainAxisSize.min, children: [
           const Align(
             alignment: Alignment.centerLeft,
-            child: Text('RunPod lane - your endpoint only',
+            child: Text('RunPod lane · your endpoint only',
                 style: TextStyle(
                     color: AppColors.darkText,
                     fontSize: 15,
@@ -1209,6 +1476,9 @@ class _ImageGenScreenState extends State<ImageGenScreen>
           ),
           TextField(
             controller: endpoint,
+            autocorrect: false,
+            enableSuggestions: false,
+            textCapitalization: TextCapitalization.none,
             style: const TextStyle(color: AppColors.darkText, fontSize: 14),
             decoration: const InputDecoration(
               labelText: 'Endpoint ID',
@@ -1222,6 +1492,9 @@ class _ImageGenScreenState extends State<ImageGenScreen>
           TextField(
             controller: key,
             obscureText: true,
+            autocorrect: false,
+            enableSuggestions: false,
+            textCapitalization: TextCapitalization.none,
             style: const TextStyle(color: AppColors.darkText, fontSize: 14),
             decoration: const InputDecoration(
               labelText: 'API key',
@@ -1248,6 +1521,11 @@ class _ImageGenScreenState extends State<ImageGenScreen>
                   style: TextStyle(color: Colors.white, fontSize: 14)),
             ),
           ),
+          TextButton(
+            onPressed: () => Navigator.of(sheetCtx).pop(),
+            child: const Text('Cancel',
+                style: TextStyle(color: AppColors.darkTextM, fontSize: 13)),
+          ),
         ]),
       ),
     );
@@ -1269,6 +1547,7 @@ class _VideoTile extends StatefulWidget {
 class _VideoTileState extends State<_VideoTile> {
   VideoPlayerController? _ctl;
   bool _ready = false;
+  bool _failed = false;
 
   @override
   void initState() {
@@ -1279,7 +1558,11 @@ class _VideoTileState extends State<_VideoTile> {
       if (!mounted) return;
       c.setLooping(true);
       setState(() => _ready = true);
-    }).catchError((_) {});
+    }).catchError((_) {
+      // UI audit 2026-11-06 (Codex P1-15): a failed init used to
+      // spin forever; it now says so.
+      if (mounted) setState(() => _failed = true);
+    });
   }
 
   @override
@@ -1297,7 +1580,15 @@ class _VideoTileState extends State<_VideoTile> {
         aspectRatio: 832 / 480,
         child: Container(
           color: AppColors.darkBgPanel,
-          child: (!_ready || c == null)
+          child: _failed
+              ? const Center(
+                  child: Text(
+                    'This video could not be played.',
+                    style: TextStyle(
+                        fontSize: 12, color: AppColors.darkTextM),
+                  ),
+                )
+              : (!_ready || c == null)
               ? const Center(
                   child: SizedBox(
                     width: 18,

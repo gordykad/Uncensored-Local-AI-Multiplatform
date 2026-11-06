@@ -118,10 +118,10 @@ class ModelController extends GetxController {
         snackPosition: SnackPosition.BOTTOM,
       );
     } catch (e) {
-      log?.error('Download failed: ${model.name} — $e', source: 'Download');
+      log?.error('Download failed: ${model.name}. $e', source: 'Download');
       Get.snackbar(
         'Download Failed',
-        e.toString(),
+        'The download did not finish. Check your connection and storage, then try again.',
         snackPosition: SnackPosition.BOTTOM,
       );
     }
@@ -193,13 +193,16 @@ class ModelController extends GetxController {
       selectedModelFilename.value = filename;
       _storage.lastModelId = filename;
     } catch (e) {
-      loadError.value = e.toString();
+      // UI audit 2026-11-06: raw engine exceptions stay in the log;
+      // the user gets a plain cause and a next step.
+      loadError.value =
+          'The model could not be loaded. The file may be damaged, or too large for this phone.';
       LogService? log;
       try { log = Get.find<LogService>(); } catch (_) {}
-      log?.error('Load failed: $filename — $e', source: 'Model');
+      log?.error('Load failed: $filename. $e', source: 'Model');
       Get.snackbar(
         'Load Failed',
-        e.toString(),
+        'That model could not be loaded. The file may be damaged, or too large for this phone.',
         snackPosition: SnackPosition.BOTTOM,
       );
     } finally {
@@ -243,10 +246,10 @@ class ModelController extends GetxController {
       _storage.lastModelId = filename;
       return null;
     } catch (e) {
-      loadError.value = e.toString();
+      loadError.value = 'The model could not be loaded.';
       try {
         Get.find<LogService>()
-            .error('Remote load failed: $filename — $e', source: 'Model');
+            .error('Remote load failed: $filename. $e', source: 'Model');
       } catch (_) {}
       return e.toString();
     } finally {
@@ -295,7 +298,7 @@ class ModelController extends GetxController {
     } catch (e) {
       Get.snackbar(
         'Clear Failed',
-        e.toString(),
+        'Temporary files could not be removed.',
         snackPosition: SnackPosition.BOTTOM,
       );
     }

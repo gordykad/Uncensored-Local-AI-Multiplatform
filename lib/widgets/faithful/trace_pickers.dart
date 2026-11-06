@@ -26,6 +26,8 @@
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
 
+import '../../theme/app_colors.dart';
+
 // ------------------------------------------------------------ AgentTrace
 class TraceSpan {
   final String label;
@@ -97,9 +99,9 @@ class _AgentTraceViewState extends State<AgentTraceView>
 
   @override
   Widget build(BuildContext context) {
-    const labelStyle = TextStyle(color: Color(0xFF9C9CA3), fontSize: 11);
+    const labelStyle = TextStyle(color: AppColors.darkTextM, fontSize: 11);
     const monoStyle = TextStyle(
-      color: Color(0xFF5C5C64),
+      color: AppColors.darkTextD,
       fontSize: 10,
       fontFamily: 'monospace',
     );
@@ -153,14 +155,14 @@ class _AgentTraceViewState extends State<AgentTraceView>
                                   width: w,
                                   height: 18,
                                   decoration: BoxDecoration(
-                                    color: const Color(0xFF9333EA).withValues(
+                                    color: AppColors.accent.withValues(
                                       alpha: state == 'Queued'
                                           ? 0.12
                                           : 0.25 + 0.55 * p,
                                     ),
                                     borderRadius: BorderRadius.circular(4),
                                     border: Border.all(
-                                      color: const Color(0xFF26262B),
+                                      color: AppColors.darkBorder,
                                     ),
                                   ),
                                 ),
@@ -207,13 +209,13 @@ class _RulerPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    final paint = Paint()..color = const Color(0xFF26262B);
+    final paint = Paint()..color = AppColors.darkBorder;
     for (var x = step; x < total; x += step) {
       final px = 86 + (size.width - 86) * (x / total);
       canvas.drawRect(Rect.fromLTWH(px, 4, 1, 6), paint);
     }
     final hx = 86 + (size.width - 86) * (t / total);
-    paint.color = const Color(0xFFA855F7);
+    paint.color = AppColors.accentHi;
     canvas.drawRect(Rect.fromLTWH(hx, 0, 1.5, 14), paint);
   }
 
@@ -243,7 +245,7 @@ class SearchInputGroup extends StatelessWidget {
         Text(
           label,
           style: const TextStyle(
-            color: Color(0xFF9C9CA3),
+            color: AppColors.darkTextM,
             fontSize: 12,
             fontWeight: FontWeight.w500,
           ),
@@ -251,22 +253,22 @@ class SearchInputGroup extends StatelessWidget {
         const SizedBox(height: 6),
         Container(
           decoration: BoxDecoration(
-            color: const Color(0xFF121214),
+            color: AppColors.darkBgInput,
             borderRadius: BorderRadius.circular(10),
-            border: Border.all(color: const Color(0xFF26262B)),
+            border: Border.all(color: AppColors.darkBorder),
           ),
           child: Row(
             children: [
               const Padding(
                 padding: EdgeInsets.only(left: 12, right: 8),
-                child: Icon(Icons.search, size: 17, color: Color(0xFF5C5C64)),
+                child: Icon(Icons.search, size: 17, color: AppColors.darkTextD),
               ),
               Expanded(
                 child: TextField(
                   controller: controller,
                   onChanged: onChanged,
                   style: const TextStyle(
-                    color: Color(0xFFF2F2F0),
+                    color: AppColors.darkText,
                     fontSize: 14,
                   ),
                   decoration: InputDecoration(
@@ -274,7 +276,7 @@ class SearchInputGroup extends StatelessWidget {
                     border: InputBorder.none,
                     hintText: hint,
                     hintStyle: const TextStyle(
-                      color: Color(0xFF5C5C64),
+                      color: AppColors.darkTextD,
                       fontSize: 14,
                     ),
                     contentPadding: const EdgeInsets.symmetric(vertical: 11),
@@ -330,6 +332,7 @@ class ModelPickerSheet extends StatefulWidget {
 class _ModelPickerSheetState extends State<ModelPickerSheet>
     with SingleTickerProviderStateMixin {
   String _query = '';
+  final _searchCtrl = TextEditingController();
   late String _source;
   late final Map<String, bool> _fav;
   late final AnimationController _enter;
@@ -355,6 +358,7 @@ class _ModelPickerSheetState extends State<ModelPickerSheet>
   @override
   void dispose() {
     _enter.dispose();
+    _searchCtrl.dispose();
     super.dispose();
   }
 
@@ -381,17 +385,43 @@ class _ModelPickerSheetState extends State<ModelPickerSheet>
             : CurvedAnimation(parent: _enter, curve: Curves.easeOut),
         child: Container(
           decoration: const BoxDecoration(
-            color: Color(0xFF0C0C0E),
+            color: AppColors.darkBgPanel,
             borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
           ),
-          padding: const EdgeInsets.fromLTRB(16, 14, 16, 24),
+          // UI audit 2026-11-06 P1-10: lift the sheet content
+          // above the keyboard when the search field is focused.
+          padding: EdgeInsets.fromLTRB(
+              16, 14, 16, 24 + MediaQuery.viewInsetsOf(context).bottom),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
+              // UI audit 2026-11-06 (Codex P2-18): a visible way
+              // out of the picker, not just the scrim.
+              Row(
+                children: [
+                  const Text(
+                    'Choose model',
+                    style: TextStyle(
+                      color: AppColors.darkText,
+                      fontSize: 15,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  const Spacer(),
+                  IconButton(
+                    tooltip: 'Close',
+                    icon: const Icon(Icons.close_rounded,
+                        color: AppColors.darkTextM, size: 20),
+                    onPressed: () => Navigator.of(context).pop(),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 4),
               SearchInputGroup(
                 label: 'Model',
                 hint: 'Search models',
+                controller: _searchCtrl,
                 onChanged: (v) => setState(() => _query = v),
               ),
               const SizedBox(height: 12),
@@ -405,27 +435,37 @@ class _ModelPickerSheetState extends State<ModelPickerSheet>
                         crossAxisAlignment: CrossAxisAlignment.stretch,
                         children: [
                           for (final s in _sources)
-                            GestureDetector(
-                              onTap: () => setState(() => _source = s),
-                              child: Container(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 10,
-                                  vertical: 8,
-                                ),
+                            // UI audit 2026-11-06: rail rows get a
+                            // 44pt hit height + selected semantics.
+                            Semantics(
+                              button: true,
+                              selected: s == _source,
+                              label: s,
+                              child: GestureDetector(
+                                onTap: () => setState(() => _source = s),
+                                child: Container(
+                                  constraints:
+                                      const BoxConstraints(minHeight: 44),
+                                  alignment: Alignment.centerLeft,
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 10,
+                                    vertical: 8,
+                                  ),
                                 decoration: BoxDecoration(
                                   color: s == _source
-                                      ? const Color(0xFF17171A)
+                                      ? AppColors.darkBgHover
                                       : Colors.transparent,
                                   borderRadius: BorderRadius.circular(8),
                                 ),
-                                child: Text(
-                                  s,
-                                  style: TextStyle(
-                                    color: s == _source
-                                        ? const Color(0xFFF2F2F0)
-                                        : const Color(0xFF9C9CA3),
-                                    fontSize: 12,
-                                    fontWeight: FontWeight.w600,
+                                  child: Text(
+                                    s,
+                                    style: TextStyle(
+                                      color: s == _source
+                                          ? AppColors.darkText
+                                          : AppColors.darkTextM,
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w600,
+                                    ),
                                   ),
                                 ),
                               ),
@@ -440,20 +480,47 @@ class _ModelPickerSheetState extends State<ModelPickerSheet>
                       child: ListView(
                         shrinkWrap: true,
                         children: [
+                          if (visible.isEmpty)
+                            Padding(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 8, vertical: 18),
+                              child: Column(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Text(
+                                    searching
+                                        ? 'No matching models'
+                                        : 'Nothing here yet',
+                                    style: const TextStyle(
+                                      color: AppColors.darkTextM,
+                                      fontSize: 13,
+                                    ),
+                                  ),
+                                  if (searching)
+                                    TextButton(
+                                      onPressed: () {
+                                        _searchCtrl.clear();
+                                        setState(() => _query = '');
+                                      },
+                                      child: const Text('Clear search'),
+                                    ),
+                                ],
+                              ),
+                            ),
                           for (final e in visible)
                             ListTile(
                               dense: true,
                               title: Text(
                                 e.name,
                                 style: const TextStyle(
-                                  color: Color(0xFFF2F2F0),
+                                  color: AppColors.darkText,
                                   fontSize: 13,
                                 ),
                               ),
                               subtitle: Text(
                                 searching ? '${e.source} · ${e.meta}' : e.meta,
                                 style: const TextStyle(
-                                  color: Color(0xFF8E8E96),
+                                  color: AppColors.darkTextD,
                                   fontSize: 11,
                                 ),
                               ),
@@ -469,13 +536,16 @@ class _ModelPickerSheetState extends State<ModelPickerSheet>
                                             : Icons.star_border,
                                         size: 18,
                                         color: (_fav[e.starModel] ?? false)
-                                            ? const Color(0xFFA855F7)
-                                            : const Color(0xFF9C9CA3),
+                                            ? AppColors.accentHi
+                                            : AppColors.darkTextM,
                                       ),
+                                      tooltip: (_fav[e.starModel] ?? false)
+                                          ? 'Remove from favorites'
+                                          : 'Add to favorites',
                                       visualDensity: VisualDensity.compact,
                                       constraints: const BoxConstraints(
-                                        minWidth: 32,
-                                        minHeight: 32,
+                                        minWidth: 44,
+                                        minHeight: 44,
                                       ),
                                       onPressed: () {
                                         final v = !(_fav[e.starModel] ?? false);
@@ -487,7 +557,7 @@ class _ModelPickerSheetState extends State<ModelPickerSheet>
                                     const Icon(
                                       Icons.check,
                                       size: 16,
-                                      color: Color(0xFFA855F7),
+                                      color: AppColors.accentHi,
                                     ),
                                 ],
                               ),

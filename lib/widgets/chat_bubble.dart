@@ -4,6 +4,7 @@ import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:get/get.dart';
 
 import '../theme/app_colors.dart';
+import '../theme/app_icons.dart';
 import '../theme/type_scale.dart';
 import '../models/message_model.dart';
 import '../services/haptics.dart';
@@ -55,7 +56,7 @@ class ChatBubble extends StatelessWidget {
                 borderRadius: BorderRadius.circular(8),
               ),
               child: const Icon(
-                Icons.person_rounded,
+                AppIcons.user,
                 size: 16,
                 color: Colors.white,
               ),
@@ -121,7 +122,7 @@ class ChatBubble extends StatelessWidget {
             : StreamReplyText(
                 text: message.content,
                 streaming: true,
-                caretColor: AppColors.accent,
+                caretColor: context.textM,
                 style: TextStyle(
                   fontSize: TS.of(context, 15),
                   height: 1.6,
@@ -164,20 +165,22 @@ class ChatBubble extends StatelessWidget {
               code: TextStyle(
                 fontFamily: 'monospace',
                 fontSize: 13,
-                color: const Color(0xFFE6EDF3),
+                color: AppColors.codeText,
                 backgroundColor: context.isDark
                     ? Colors.white.withOpacity(0.08)
                     : Colors.black.withOpacity(0.06),
               ),
               codeblockDecoration: BoxDecoration(
-                color: const Color(0xFF1E1E2E),
+                color: AppColors.codeBg,
                 borderRadius: BorderRadius.circular(8),
               ),
               codeblockPadding: const EdgeInsets.all(14),
+              // UI audit 2026-11-06 P2-2: blockquote chrome is
+              // decoration; the accent is action-only.
               blockquoteDecoration: BoxDecoration(
-                color: AppColors.accent.withOpacity(0.08),
-                border: const Border(
-                  left: BorderSide(color: AppColors.accent, width: 3),
+                color: Colors.white.withOpacity(0.04),
+                border: Border(
+                  left: BorderSide(color: context.textD, width: 3),
                 ),
               ),
               blockquotePadding: const EdgeInsets.symmetric(
@@ -203,13 +206,55 @@ class ChatBubble extends StatelessWidget {
           ),
         ),
 
+        // UI audit 2026-11-06 (Claude P2-6, Codex P1-12): an
+        // interrupted reply says so, in words, with a retry. The
+        // partial text above stays; it is never passed off as whole.
+        if (message.failed) ...[
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              const Icon(
+                Icons.error_outline_rounded,
+                size: 15,
+                color: AppColors.red,
+              ),
+              const SizedBox(width: 6),
+              Text(
+                message.content.isEmpty
+                    ? 'The reply could not be completed.'
+                    : 'Response interrupted.',
+                style: const TextStyle(fontSize: 12, color: AppColors.red),
+              ),
+              if (onRegenerate != null) ...[
+                const SizedBox(width: 12),
+                InkWell(
+                  onTap: onRegenerate,
+                  borderRadius: BorderRadius.circular(4),
+                  child: const Padding(
+                    padding: EdgeInsets.symmetric(horizontal: 4, vertical: 14),
+                    child: Text(
+                      'Retry',
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.accentHi,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ],
+
         // Action row: Copy + Speed
         if (message.content.isNotEmpty)
           Padding(
             padding: const EdgeInsets.only(top: 12),
             child: Row(
               children: [
-                // Copy button
+                // Copy button (UI audit 2026-11-06 P1-7: the action
+                // row gets a 44pt-tall hit area via vertical padding)
                 InkWell(
                   onTap: () {
                     TapFx.light();
@@ -226,7 +271,7 @@ class ChatBubble extends StatelessWidget {
                   child: Padding(
                     padding: const EdgeInsets.symmetric(
                       horizontal: 4,
-                      vertical: 2,
+                      vertical: 14,
                     ),
                     child: Row(
                       mainAxisSize: MainAxisSize.min,
@@ -255,7 +300,7 @@ class ChatBubble extends StatelessWidget {
                     child: Padding(
                       padding: const EdgeInsets.symmetric(
                         horizontal: 4,
-                        vertical: 2,
+                        vertical: 14,
                       ),
                       child: Row(
                         mainAxisSize: MainAxisSize.min,

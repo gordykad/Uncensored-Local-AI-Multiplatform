@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:flutter/foundation.dart';
 import 'package:get/get.dart';
 import 'package:llamadart/llamadart.dart';
 
@@ -221,9 +222,11 @@ class ChatController extends GetxController {
         chats.refresh();
       }
     } catch (e) {
-      if (aiMsg.content.isEmpty) {
-        aiMsg.content = '⚠ Error: ${e.toString()}';
-      }
+      // UI audit 2026-11-06: failure is a state, not a string. The
+      // partial text (if any) stays, flagged; the bubble renders the
+      // interrupted notice + retry. The raw error goes to the log.
+      aiMsg.failed = true;
+      debugPrint('MiniX generation failed: $e');
     } finally {
       // Clean up any trailing stop tokens or whitespace
       aiMsg.content = aiMsg.content

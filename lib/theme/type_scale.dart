@@ -1,17 +1,17 @@
 import 'package:flutter/material.dart';
 
 /// Audit #2/#9 (Kai's approved build order, 2026-11-05): a role type
-/// scale that honors the system text size (Dynamic Type). The base
-/// sizes are the app's existing design sizes; every rendered size is
-/// multiplied by the platform text scaler, clamped so layouts hold
-/// at the extremes (0.85x .. 1.35x).
+/// scale that honors the system text size (Dynamic Type).
+///
+/// Claude x Codex audit 2026-11-06 (P1-1): TS must NOT pre-scale.
+/// Flutter's Text applies the MediaQuery text scaler itself, so a
+/// pre-scaled fontSize was scaled twice. TS now returns the base
+/// size untouched; the single clamp lives at the app root via
+/// MediaQuery.withClampedTextScaling (0.85x .. 1.35x) in main.dart.
 class TS {
   TS._();
 
-  static double of(BuildContext c, double base) {
-    final scaled = MediaQuery.textScalerOf(c).scale(base);
-    return scaled.clamp(base * 0.85, base * 1.35).toDouble();
-  }
+  static double of(BuildContext c, double base) => base;
 
   static TextStyle display(BuildContext c, {Color? color}) => TextStyle(
     fontSize: of(c, 22),

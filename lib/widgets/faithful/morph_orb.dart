@@ -1007,7 +1007,14 @@ class _MorphOrbComposerState extends State<MorphOrbComposer>
           ),
         ),
         // Send (.mo-send): 36px circle, 44pt hit area (audit #4).
-        SizedBox(
+        // UI audit 2026-11-06 residual: VoiceOver identity for the
+        // composer send. Semantics wrapper only - the orb's design,
+        // choreography and behavior are untouched.
+        Semantics(
+          button: true,
+          label: 'Send',
+          enabled: _phase == _Phase.idle && widget.canSend,
+          child: SizedBox(
           width: 44,
           height: 44,
           child: Center(
@@ -1033,6 +1040,7 @@ class _MorphOrbComposerState extends State<MorphOrbComposer>
                 ),
               ),
             ),
+          ),
           ),
         ),
         const SizedBox(width: 4),

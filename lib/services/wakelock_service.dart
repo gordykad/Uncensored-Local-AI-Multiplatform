@@ -50,7 +50,7 @@ class WakelockService extends GetxService {
 
       await FlutterForegroundTask.startService(
         notificationTitle: 'Downloading $modelName',
-        notificationText: 'Download in progress — keep the app open',
+        notificationText: 'Download in progress. Keep the app open',
         serviceId: 100,
       );
     } catch (e) {
@@ -70,7 +70,7 @@ class WakelockService extends GetxService {
       final pct = (progress * 100).toInt();
       final speed = speedText != null ? ' • $speedText' : '';
       await FlutterForegroundTask.updateService(
-        notificationTitle: 'Downloading $modelName — $pct%',
+        notificationTitle: 'Downloading $modelName. $pct%',
         notificationText: 'Download in progress$speed',
       );
     } catch (_) {}

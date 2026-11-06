@@ -4,8 +4,11 @@ import '../app_version.dart';
 import 'package:get/get.dart';
 
 import '../theme/app_colors.dart';
+import '../theme/app_icons.dart';
+import '../theme/type_scale.dart';
 import '../services/image_gen_service.dart';
 import '../widgets/faithful/widgets.dart';
+import '../widgets/tab_header.dart';
 import '../widgets/faithful/controls_meta.dart';
 import '../widgets/faithful/textfx.dart';
 import '../widgets/faithful/glitch.dart';
@@ -25,6 +28,25 @@ import '../services/model_manager.dart';
 import '../services/background_optimizer_service.dart';
 import '../services/chat_storage_service.dart';
 import '../services/memory_probe.dart';
+
+/// Total bytes under the models directory (downloaded GGUFs and
+/// their sidecar files). Walks once per Settings build.
+Future<int> _modelsDirBytes(String path) async {
+  var total = 0;
+  try {
+    final dir = Directory(path);
+    if (await dir.exists()) {
+      await for (final e in dir.list(recursive: true, followLinks: false)) {
+        if (e is File) {
+          try {
+            total += await e.length();
+          } catch (_) {}
+        }
+      }
+    }
+  } catch (_) {}
+  return total;
+}
 
 class SettingsScreen extends StatelessWidget {
   /// When true, no Scaffold — just the body content for embedding in tabs.
@@ -58,40 +80,11 @@ class _SettingsBody extends StatelessWidget {
 
     return Column(
       children: [
-        // ── Top bar ──────────────────────────────────
-        Container(
-          padding: EdgeInsets.only(
-            top: showBackButton ? MediaQuery.of(context).padding.top : 0,
-            left: 4,
-            right: 4,
-          ),
-          decoration: BoxDecoration(
-            color: context.bg,
-            border: Border(
-              bottom: BorderSide(color: context.border, width: 0.5),
-            ),
-          ),
-          child: SizedBox(
-            height: 52,
-            child: Row(
-              children: [
-                if (showBackButton)
-                  IconButton(
-                    icon: Icon(Icons.arrow_back_rounded, color: context.text),
-                    onPressed: () => Get.back(),
-                  ),
-                if (!showBackButton) const SizedBox(width: 16),
-                BlurReveal(
-                  text: 'Settings',
-                  style: TextStyle(
-                    fontSize: 17,
-                    fontWeight: FontWeight.w600,
-                    color: context.text,
-                  ),
-                ),
-              ],
-            ),
-          ),
+        // ── Top bar (shared TabHeader, audit P2-10) ──
+        TabHeader(
+          title: 'Settings',
+          showBackButton: showBackButton,
+          topInset: showBackButton ? MediaQuery.of(context).padding.top : 0,
         ),
 
         // ── Body ─────────────────────────────────────
@@ -109,15 +102,10 @@ class _SettingsBody extends StatelessWidget {
                       Container(
                         width: 44,
                         height: 44,
+                        // UI audit 2026-11-06 P2-2: the purple glow
+                        // was decoration; the icon stands on its own.
                         decoration: BoxDecoration(
                           borderRadius: BorderRadius.circular(11),
-                          boxShadow: [
-                            BoxShadow(
-                              color: AppColors.accent.withValues(alpha: 0.35),
-                              blurRadius: 18,
-                              spreadRadius: 1,
-                            ),
-                          ],
                         ),
                         child: ClipRRect(
                           borderRadius: BorderRadius.circular(11),
@@ -143,7 +131,7 @@ class _SettingsBody extends StatelessWidget {
                             ),
                             const SizedBox(height: 3),
                             Text(
-                              'Black box build \u00b7 dark only, by law',
+                              'Black box build \u00b7 dark only',
                               style: TextStyle(
                                 fontSize: 11.5,
                                 color: context.textD,
@@ -179,7 +167,7 @@ class _SettingsBody extends StatelessWidget {
                         final disabled = snapshot.data ?? false;
                         if (disabled) {
                           return const Icon(
-                            Icons.check_circle_rounded,
+                            AppIcons.checkCircle,
                             color: AppColors.green,
                             size: 20,
                           );
@@ -213,42 +201,7 @@ class _SettingsBody extends StatelessWidget {
                 style: TextStyle(fontSize: 12, color: context.textD),
               ),
               const SizedBox(height: 12),
-              Obx(
-                () => TextField(
-                  controller:
-                      TextEditingController(text: chatCtrl.systemPrompt.value)
-                        ..selection = TextSelection.fromPosition(
-                          TextPosition(
-                            offset: chatCtrl.systemPrompt.value.length,
-                          ),
-                        ),
-                  maxLines: 4,
-                  style: TextStyle(
-                    fontSize: 14,
-                    color: context.text,
-                    height: 1.5,
-                  ),
-                  decoration: InputDecoration(
-                    hintText: 'e.g. You are a helpful assistant...',
-                    hintStyle: TextStyle(color: context.textD),
-                    filled: true,
-                    fillColor: context.bgInput,
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(12),
-                      borderSide: BorderSide(color: context.border),
-                    ),
-                    enabledBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(12),
-                      borderSide: BorderSide(color: context.border),
-                    ),
-                    focusedBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(12),
-                      borderSide: const BorderSide(color: AppColors.accent),
-                    ),
-                  ),
-                  onChanged: (v) => chatCtrl.setGlobalSystemPrompt(v),
-                ),
-              ),
+              _SystemPromptField(chatCtrl: chatCtrl),
               const SizedBox(height: 8),
               Align(
                 alignment: Alignment.centerLeft,
@@ -370,7 +323,9 @@ class _SettingsBody extends StatelessWidget {
                           children: [
                             Icon(
                               Icons.api_rounded,
-                              color: running ? AppColors.accent : context.textM,
+                              // Status is said in text; the icon
+                              // stays neutral (audit P2-2).
+                              color: context.textM,
                             ),
                             const SizedBox(width: 12),
                             Expanded(
@@ -409,7 +364,7 @@ class _SettingsBody extends StatelessWidget {
                                       } catch (e) {
                                         Get.snackbar(
                                           'Local API Error',
-                                          e.toString(),
+                                          'The server could not change state. Try again.',
                                           snackPosition: SnackPosition.BOTTOM,
                                         );
                                       }
@@ -433,7 +388,7 @@ class _SettingsBody extends StatelessWidget {
                                   ),
                                   const SizedBox(height: 2),
                                   Text(
-                                    'Listen on 0.0.0.0 instead of localhost',
+                                    'Listen on all interfaces instead of localhost only',
                                     style: TextStyle(
                                       color: context.textD,
                                       fontSize: 12,
@@ -454,51 +409,13 @@ class _SettingsBody extends StatelessWidget {
                                       } catch (e) {
                                         Get.snackbar(
                                           'Settings Error',
-                                          e.toString(),
+                                          'That change could not be applied. Try again.',
                                           snackPosition: SnackPosition.BOTTOM,
                                         );
                                       }
                                     },
                             ),
                           ],
-                        ),
-                        const SizedBox(height: 12),
-                        StatefulBuilder(
-                          builder: (context, setRow) {
-                            final svc = ImageGenService();
-                            return Row(
-                              children: [
-                                Expanded(
-                                  child: Column(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
-                                    children: [
-                                      Text(
-                                        'Connectivity',
-                                        style: TextStyle(
-                                          color: context.text,
-                                          fontSize: 14,
-                                        ),
-                                      ),
-                                      const SizedBox(height: 2),
-                                      Text(
-                                        'Hosted image lanes + shared config. Local models and the local API are unaffected when off.',
-                                        style: TextStyle(
-                                          color: context.textD,
-                                          fontSize: 12,
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                                MinixSwitch(
-                                  value: svc.connectivityOn,
-                                  onChanged: (v) =>
-                                      setRow(() => svc.connectivityOn = v),
-                                ),
-                              ],
-                            );
-                          },
                         ),
                         if (apiServer.allInterfaces.value)
                           Container(
@@ -562,65 +479,7 @@ class _SettingsBody extends StatelessWidget {
                           ],
                         ),
                         const SizedBox(height: 12),
-                        TextFormField(
-                          key: ValueKey('api-port-${apiServer.port.value}'),
-                          initialValue: apiServer.port.value.toString(),
-                          keyboardType: TextInputType.number,
-                          style: TextStyle(color: context.text, fontSize: 13),
-                          decoration: InputDecoration(
-                            labelText: 'Port',
-                            helperText:
-                                'Use API key "local" in clients that require one.',
-                            labelStyle: TextStyle(color: context.textM),
-                            helperStyle: TextStyle(
-                              color: context.textD,
-                              fontSize: 11,
-                            ),
-                            filled: true,
-                            fillColor: context.bgInput,
-                            border: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(8),
-                              borderSide: BorderSide(color: context.border),
-                            ),
-                            enabledBorder: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(8),
-                              borderSide: BorderSide(color: context.border),
-                            ),
-                            focusedBorder: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(8),
-                              borderSide: const BorderSide(
-                                color: AppColors.accent,
-                              ),
-                            ),
-                          ),
-                          onFieldSubmitted: (value) async {
-                            final parsed = int.tryParse(value.trim());
-                            if (parsed == null ||
-                                parsed < 1024 ||
-                                parsed > 65535) {
-                              Get.snackbar(
-                                'Invalid Port',
-                                'Choose a port from 1024 to 65535.',
-                                snackPosition: SnackPosition.BOTTOM,
-                              );
-                              return;
-                            }
-                            try {
-                              await apiServer.setPort(parsed);
-                              Get.snackbar(
-                                'Local API Updated',
-                                'Base URL is ${apiServer.baseUrl}',
-                                snackPosition: SnackPosition.BOTTOM,
-                              );
-                            } catch (e) {
-                              Get.snackbar(
-                                'Local API Error',
-                                e.toString(),
-                                snackPosition: SnackPosition.BOTTOM,
-                              );
-                            }
-                          },
-                        ),
+                        _PortField(apiServer: apiServer),
                         const SizedBox(height: 16),
                         SizedBox(
                           width: double.infinity,
@@ -658,11 +517,64 @@ class _SettingsBody extends StatelessWidget {
 
               const SizedBox(height: 28),
 
+              // ── Connectivity (ticket 09/28) ─────────────
+              // UI audit 2026-11-06 P2-11: the master switch for
+              // hosted lanes gets its own section, not a row buried
+              // inside the Local API card.
+              _sectionHeader(context, 'Connectivity'),
+              const SizedBox(height: 12),
+              _card(
+                context,
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child:
+                        StatefulBuilder(
+                          builder: (context, setRow) {
+                            final svc = ImageGenService();
+                            return Row(
+                              children: [
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        'Connectivity',
+                                        style: TextStyle(
+                                          color: context.text,
+                                          fontSize: 14,
+                                        ),
+                                      ),
+                                      const SizedBox(height: 2),
+                                      Text(
+                                        'Hosted image lanes + shared config. Local models and the local API are unaffected when off.',
+                                        style: TextStyle(
+                                          color: context.textD,
+                                          fontSize: 12,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                MinixSwitch(
+                                  value: svc.connectivityOn,
+                                  onChanged: (v) =>
+                                      setRow(() => svc.connectivityOn = v),
+                                ),
+                              ],
+                            );
+                          },
+                        ),
+                ),
+              ),
+
+              const SizedBox(height: 28),
+
               // ── Mesh (ticket 31) ────────────────────────
               _sectionHeader(context, 'Mesh'),
               const SizedBox(height: 8),
               Text(
-                'The Astro OS lanes, served by the mesh on your PC. Keys stay on the PC - the app only holds this address.',
+                'The Astro OS lanes, served by the mesh on your PC. Keys stay on the PC · the app only holds this address.',
                 style: TextStyle(fontSize: 12, color: context.textD),
               ),
               const SizedBox(height: 12),
@@ -686,7 +598,7 @@ class _SettingsBody extends StatelessWidget {
               _sectionHeader(context, 'Custom Connections'),
               const SizedBox(height: 8),
               Text(
-                'Your own URL/API seats. They answer straight from this phone, anywhere - no PC needed. Keys live on this device only.',
+                'Your own URL/API seats. They answer straight from this phone, anywhere · no PC needed. Keys live on this device only.',
                 style: TextStyle(fontSize: 12, color: context.textD),
               ),
               const SizedBox(height: 12),
@@ -710,11 +622,42 @@ class _SettingsBody extends StatelessWidget {
                       ),
                       const SizedBox(width: 12),
                       Expanded(
-                        child: Text(
-                          modelManager.modelsDir,
-                          style: TextStyle(fontSize: 13, color: context.text),
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              modelManager.modelsDir,
+                              style:
+                                  TextStyle(fontSize: 13, color: context.text),
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            const SizedBox(height: 4),
+                            // UI audit 2026-11-06 P2-11: the card
+                            // showed only a path. Models' footprint
+                            // is the number that matters here.
+                            FutureBuilder<int>(
+                              future: _modelsDirBytes(
+                                  modelManager.modelsDir),
+                              builder: (context, snap) {
+                                if (!snap.hasData) {
+                                  return Text(
+                                    'Measuring model storage',
+                                    style: TextStyle(
+                                        fontSize: 12, color: context.textD),
+                                  );
+                                }
+                                final gb = snap.data! / 1073741824;
+                                return Text(
+                                  gb >= 0.1
+                                      ? 'Models use ${gb.toStringAsFixed(2)} GB'
+                                      : 'Models use ${(snap.data! / 1048576).toStringAsFixed(0)} MB',
+                                  style: TextStyle(
+                                      fontSize: 12, color: context.textD),
+                                );
+                              },
+                            ),
+                          ],
                         ),
                       ),
                     ],
@@ -767,7 +710,7 @@ class _SettingsBody extends StatelessWidget {
                             );
                           },
                           style: ElevatedButton.styleFrom(
-                            backgroundColor: AppColors.red,
+                            backgroundColor: AppColors.redDeep,
                             elevation: 0,
                           ),
                           child: const Text(
@@ -811,39 +754,53 @@ class _SettingsBody extends StatelessWidget {
               const SizedBox(height: 40),
 
               // ── Identity (ticket 08) ──────────────────────
-              const ParticleText(height: 130),
+              // UI audit 2026-11-06 P2-7: the identity effects are
+              // repeating animations; Reduce Motion freezes them.
+              TickerMode(
+                enabled: !RM.off(context),
+                child: const ParticleText(height: 130),
+              ),
               const SizedBox(height: 10),
               Center(
                 child: Column(
                   children: [
-                    TextGlitch(
-                      text: 'ASTRO MINIX',
-                      hoverText: 'BLACK BOX',
-                      style: TextStyle(
-                        fontSize: 15,
-                        fontWeight: FontWeight.w600,
-                        color: context.text,
+                    TickerMode(
+                      enabled: !RM.off(context),
+                      child: TextGlitch(
+                        text: 'ASTRO MINIX',
+                        hoverText: 'BLACK BOX',
+                        style: TextStyle(
+                          fontSize: 15,
+                          fontWeight: FontWeight.w600,
+                          color: context.text,
+                        ),
                       ),
                     ),
                     const SizedBox(height: 7),
-                    GlitchText(
-                      text: 'UNCENSORED',
+                    TickerMode(
+                      enabled: !RM.off(context),
+                      child: GlitchText(
+                        text: 'UNCENSORED',
                       intensity: GlitchIntensity.medium,
-                      style: TextStyle(
-                        fontSize: 11,
-                        fontWeight: FontWeight.w700,
-                        letterSpacing: 0.5,
-                        color: context.text,
+                        style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w700,
+                          letterSpacing: 0.5,
+                          color: context.text,
+                        ),
                       ),
                     ),
                     const SizedBox(height: 9),
-                    SignalReveal(
-                      text: 'NOTHING LEAVES THIS PHONE.',
-                      style: TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600,
-                        letterSpacing: 0.8,
-                        color: context.text,
+                    TickerMode(
+                      enabled: !RM.off(context),
+                      child: SignalReveal(
+                        text: 'ON-DEVICE MODELS NEVER LEAVE THIS PHONE.',
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                          letterSpacing: 0.8,
+                          color: context.text,
+                        ),
                       ),
                     ),
                     const SizedBox(height: 10),
@@ -855,7 +812,10 @@ class _SettingsBody extends StatelessWidget {
                 ),
               ),
               const SizedBox(height: 20),
-              const GravityStars(height: 150),
+              TickerMode(
+                enabled: !RM.off(context),
+                child: const GravityStars(height: 150),
+              ),
               const SizedBox(height: 28),
 
               // ── App Logs ──────────────────────────────────
@@ -976,7 +936,7 @@ class _HardwareSettingsCardState extends State<_HardwareSettingsCard> {
       return {
         'backend': 'cpu',
         'gpuLayers': 0,
-        'reason': 'CPU mode — most compatible on desktop',
+        'reason': 'CPU mode. Most compatible on desktop',
       };
     }
 
@@ -999,21 +959,21 @@ class _HardwareSettingsCardState extends State<_HardwareSettingsCard> {
       return {
         'backend': 'opencl',
         'gpuLayers': 33,
-        'reason': 'OpenCL GPU — best for high-end SoC ($cores cores detected)',
+        'reason': 'OpenCL GPU. Best for high-end SoC ($cores cores detected)',
       };
     } else if (cores >= 6) {
       // Mid-range device
       return {
         'backend': 'cpu',
         'gpuLayers': 0,
-        'reason': 'CPU mode — safe for mid-range devices ($cores cores)',
+        'reason': 'CPU mode. Safe for mid-range devices ($cores cores)',
       };
     } else {
       // Low-end device
       return {
         'backend': 'cpu',
         'gpuLayers': 0,
-        'reason': 'CPU mode — optimized for lower-end devices ($cores cores)',
+        'reason': 'CPU mode. Optimized for lower-end devices ($cores cores)',
       };
     }
   }
@@ -1144,7 +1104,7 @@ class _HardwareSettingsCardState extends State<_HardwareSettingsCard> {
           Container(
             padding: const EdgeInsets.all(8),
             decoration: BoxDecoration(
-              color: AppColors.accent.withValues(alpha: 0.08),
+              color: context.bgInput,
               borderRadius: BorderRadius.circular(8),
             ),
             child: Row(
@@ -1152,7 +1112,7 @@ class _HardwareSettingsCardState extends State<_HardwareSettingsCard> {
                 Icon(
                   Icons.info_outline_rounded,
                   size: 14,
-                  color: AppColors.accent,
+                  color: context.textM,
                 ),
                 const SizedBox(width: 8),
                 Expanded(
@@ -1251,7 +1211,7 @@ class _HardwareSettingsCardState extends State<_HardwareSettingsCard> {
             // ── Engine knobs (ticket 03): context + threads ──
             Row(
               children: [
-                Icon(Icons.tune_rounded, size: 16, color: AppColors.accent),
+                Icon(Icons.tune_rounded, size: 16, color: context.textM),
                 const SizedBox(width: 8),
                 Text(
                   'Engine Knobs',
@@ -1322,7 +1282,7 @@ class _HardwareSettingsCardState extends State<_HardwareSettingsCard> {
             ),
             const SizedBox(height: 4),
             Text(
-              'On keeps the shipped rule (CPU loads on, GPU auto). Flash attention is the prefill lever - A/B it against the METER lines in Diagnostics.',
+              'On keeps the shipped rule (CPU loads on, GPU auto). Flash attention is the prefill lever · A/B it against the METER lines in Diagnostics.',
               style: TextStyle(color: context.textD, fontSize: 11, height: 1.4),
             ),
             const SizedBox(height: 16),
@@ -1464,6 +1424,10 @@ class _HardwareSettingsCardState extends State<_HardwareSettingsCard> {
             onTap: () => onTap(values[i]),
             borderRadius: BorderRadius.circular(8),
             child: Container(
+              // UI audit 2026-11-06: hardware chips were ~34pt;
+              // 44pt floor like every other target.
+              constraints: const BoxConstraints(minHeight: 44),
+              alignment: Alignment.center,
               padding: const EdgeInsets.symmetric(vertical: 9),
               decoration: BoxDecoration(
                 color: isSel ? AppColors.accent : context.bgInput,
@@ -1497,6 +1461,8 @@ class _HardwareSettingsCardState extends State<_HardwareSettingsCard> {
         onTap: () => _saveBackend(value),
         borderRadius: BorderRadius.circular(8),
         child: Container(
+          constraints: const BoxConstraints(minHeight: 44),
+          alignment: Alignment.center,
           padding: const EdgeInsets.symmetric(vertical: 10),
           decoration: BoxDecoration(
             color: selected ? AppColors.accent : context.bgInput,
@@ -1576,6 +1542,12 @@ class _MeshSettingsCardState extends State<_MeshSettingsCard> {
         children: [
           TextField(
             controller: _addr,
+            // An address is not prose: no autocorrect, no
+            // capitalization (audit P2-11).
+            autocorrect: false,
+            enableSuggestions: false,
+            textCapitalization: TextCapitalization.none,
+            keyboardType: TextInputType.url,
             style: TextStyle(color: context.text, fontSize: 13),
             decoration: InputDecoration(
               labelText: 'Mesh address (host:port)',
@@ -1633,11 +1605,12 @@ class _MeshSettingsCardState extends State<_MeshSettingsCard> {
                   ],
                 ),
               ),
-              Switch(
+              // UI audit 2026-11-06 P2-11: the mesh card toggles
+              // with the house switch, not a stock Material Switch.
+              MinixSwitch(
                 value: _phoneNode,
-                activeThumbColor: AppColors.accent,
                 onChanged: _phoneNodeBusy
-                    ? null
+                    ? (_) {}
                     : (v) async {
                         TapFx.select();
                         setState(() => _phoneNodeBusy = true);
@@ -1654,8 +1627,8 @@ class _MeshSettingsCardState extends State<_MeshSettingsCard> {
                               ok
                                   ? (v
                                         ? 'This phone is on the mesh as node "phone"'
-                                        : 'Phone node off - the mesh will forget this phone in about 3 minutes')
-                                  : 'No tailnet address found - is Tailscale up on this phone?',
+                                        : 'Phone node off · the mesh will forget this phone in about 3 minutes')
+                                  : 'No tailnet address found · is Tailscale up on this phone?',
                               style: TextStyle(color: context.text),
                             ),
                           ),
@@ -1791,16 +1764,30 @@ class _ChatGptCardState extends State<_ChatGptCard> {
               style: TextStyle(color: context.textM, fontSize: 12),
             ),
             const Spacer(),
-            DropdownButton<String>(
-              value: model,
-              dropdownColor: context.bgPanel,
-              style: TextStyle(color: context.text, fontSize: 13),
-              items: _models
-                  .map((m) => DropdownMenuItem(value: m, child: Text(m)))
-                  .toList(),
-              onChanged: (v) {
-                if (v != null) _setModel(v);
-              },
+            // UI audit 2026-11-06 P2-11: house input chrome, not a
+            // bare stock dropdown.
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10),
+              decoration: BoxDecoration(
+                color: AppColors.darkBgInput,
+                border: Border.all(color: context.border),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: DropdownButton<String>(
+                value: model,
+                dropdownColor: context.bgPanel,
+                underline: const SizedBox.shrink(),
+                borderRadius: BorderRadius.circular(10),
+                icon: Icon(Icons.arrow_drop_down_rounded,
+                    color: context.textM),
+                style: TextStyle(color: context.text, fontSize: 13),
+                items: _models
+                    .map((m) => DropdownMenuItem(value: m, child: Text(m)))
+                    .toList(),
+                onChanged: (v) {
+                  if (v != null) _setModel(v);
+                },
+              ),
             ),
           ],
         ),
@@ -1839,12 +1826,19 @@ class _CustomConnectionsCardState extends State<_CustomConnectionsCard> {
     TextEditingController c,
     String label, {
     bool obscure = false,
+    bool url = false,
   }) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 10),
       child: TextField(
         controller: c,
         obscureText: obscure,
+        // UI audit 2026-11-06 P2-11: URLs and keys must not be
+        // autocorrected or auto-capitalized into garbage.
+        autocorrect: false,
+        enableSuggestions: false,
+        textCapitalization: TextCapitalization.none,
+        keyboardType: url ? TextInputType.url : TextInputType.text,
         style: TextStyle(color: context.text, fontSize: 13),
         decoration: InputDecoration(
           labelText: label,
@@ -1861,11 +1855,16 @@ class _CustomConnectionsCardState extends State<_CustomConnectionsCard> {
   }
 
   Future<void> _form([CustomConnection? existing]) async {
+    // UI audit 2026-11-06 (Codex P1-2): the seeded ChatGPT connection
+    // is managed by the ChatGPT card; the generic form cannot edit it
+    // (its type is not in this form's dropdown and would crash it).
+    if (existing?.type == 'chatgpt') return;
     final name = TextEditingController(text: existing?.name ?? '');
     final base = TextEditingController(text: existing?.baseUrl ?? '');
     final model = TextEditingController(text: existing?.model ?? '');
     final key = TextEditingController(text: existing?.apiKey ?? '');
     var type = existing?.type ?? 'openai';
+    var error = '';
     final ok = await showDialog<bool>(
       context: context,
       builder: (dlgCtx) => StatefulBuilder(
@@ -1880,9 +1879,23 @@ class _CustomConnectionsCardState extends State<_CustomConnectionsCard> {
               mainAxisSize: MainAxisSize.min,
               children: [
                 _field(dlgCtx, name, 'Name'),
-                _field(dlgCtx, base, 'Base URL (https://...)'),
+                _field(dlgCtx, base, 'Base URL (https://...)', url: true),
                 _field(dlgCtx, model, 'Model id'),
                 _field(dlgCtx, key, 'API key (optional)', obscure: true),
+                if (error.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 8),
+                    child: Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        error,
+                        style: const TextStyle(
+                          color: AppColors.red,
+                          fontSize: 12,
+                        ),
+                      ),
+                    ),
+                  ),
                 Row(
                   children: [
                     Text(
@@ -1890,21 +1903,33 @@ class _CustomConnectionsCardState extends State<_CustomConnectionsCard> {
                       style: TextStyle(color: dlgCtx.textM, fontSize: 12),
                     ),
                     const Spacer(),
-                    DropdownButton<String>(
-                      value: type,
-                      dropdownColor: dlgCtx.bgPanel,
-                      style: TextStyle(color: dlgCtx.text, fontSize: 13),
-                      items: const [
-                        DropdownMenuItem(
-                          value: 'openai',
-                          child: Text('OpenAI'),
-                        ),
-                        DropdownMenuItem(
-                          value: 'ollama',
-                          child: Text('Ollama'),
-                        ),
-                      ],
-                      onChanged: (v) => setDlg(() => type = v ?? 'openai'),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 10),
+                      decoration: BoxDecoration(
+                        color: AppColors.darkBgInput,
+                        border: Border.all(color: dlgCtx.border),
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: DropdownButton<String>(
+                        value: type,
+                        dropdownColor: dlgCtx.bgPanel,
+                        underline: const SizedBox.shrink(),
+                        borderRadius: BorderRadius.circular(10),
+                        icon: Icon(Icons.arrow_drop_down_rounded,
+                            color: dlgCtx.textM),
+                        style: TextStyle(color: dlgCtx.text, fontSize: 13),
+                        items: const [
+                          DropdownMenuItem(
+                            value: 'openai',
+                            child: Text('OpenAI'),
+                          ),
+                          DropdownMenuItem(
+                            value: 'ollama',
+                            child: Text('Ollama'),
+                          ),
+                        ],
+                        onChanged: (v) => setDlg(() => type = v ?? 'openai'),
+                      ),
                     ),
                   ],
                 ),
@@ -1917,7 +1942,19 @@ class _CustomConnectionsCardState extends State<_CustomConnectionsCard> {
               child: const Text('Cancel'),
             ),
             FilledButton(
-              onPressed: () => Navigator.of(dlgCtx).pop(true),
+              // UI audit 2026-11-06 P1-6: validate INSIDE the dialog so
+              // a bad submission keeps the user's typed input.
+              onPressed: () {
+                if (name.text.trim().isEmpty ||
+                    base.text.trim().isEmpty ||
+                    model.text.trim().isEmpty) {
+                  setDlg(
+                    () => error = 'Name, base URL and model are all required',
+                  );
+                  return;
+                }
+                Navigator.of(dlgCtx).pop(true);
+              },
               child: const Text('Save'),
             ),
           ],
@@ -1925,21 +1962,6 @@ class _CustomConnectionsCardState extends State<_CustomConnectionsCard> {
       ),
     );
     if (ok != true) return;
-    if (name.text.trim().isEmpty ||
-        base.text.trim().isEmpty ||
-        model.text.trim().isEmpty) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          backgroundColor: context.bgPanel,
-          content: Text(
-            'Name, base URL and model are all required',
-            style: TextStyle(color: context.text),
-          ),
-        ),
-      );
-      return;
-    }
     final conn = CustomConnection(
       id: existing?.id ?? 'c${DateTime.now().millisecondsSinceEpoch}',
       name: name.text.trim(),
@@ -1989,32 +2011,70 @@ class _CustomConnectionsCardState extends State<_CustomConnectionsCard> {
                         overflow: TextOverflow.ellipsis,
                       ),
                       Text(
-                        '${c.model} - ${c.type == 'ollama' ? 'Ollama API' : 'OpenAI API'}',
+                        c.type == 'chatgpt'
+                            ? '${c.model} · ChatGPT subscription'
+                            : '${c.model} - ${c.type == 'ollama' ? 'Ollama API' : 'OpenAI API'}',
                         style: TextStyle(fontSize: 11, color: context.textM),
                         overflow: TextOverflow.ellipsis,
                       ),
                     ],
                   ),
                 ),
-                IconButton(
-                  icon: Icon(
-                    Icons.edit_outlined,
-                    size: 18,
-                    color: context.textM,
+                // The seeded ChatGPT row is managed by the ChatGPT card
+                // above (sign-in state), not by this generic form.
+                if (c.type != 'chatgpt') ...[
+                  IconButton(
+                    tooltip: 'Edit connection',
+                    icon: Icon(
+                      Icons.edit_outlined,
+                      size: 18,
+                      color: context.textM,
+                    ),
+                    onPressed: () => _form(c),
                   ),
-                  onPressed: () => _form(c),
-                ),
-                IconButton(
-                  icon: const Icon(
-                    Icons.delete_outline,
-                    size: 18,
-                    color: AppColors.red,
+                  IconButton(
+                    tooltip: 'Delete connection',
+                    icon: const Icon(
+                      Icons.delete_outline,
+                      size: 18,
+                      color: AppColors.red,
+                    ),
+                    onPressed: () async {
+                      // UI audit 2026-11-06 P1-5: confirm first; the
+                      // delete also drops the stored API key.
+                      final sure = await showDialog<bool>(
+                        context: context,
+                        builder: (dCtx) => AlertDialog(
+                          backgroundColor: dCtx.bgPanel,
+                          title: Text(
+                            'Delete connection?',
+                            style: TextStyle(color: dCtx.text),
+                          ),
+                          content: Text(
+                            '"${c.name}" and its stored API key will be removed.',
+                            style: TextStyle(color: dCtx.textM, fontSize: 13),
+                          ),
+                          actions: [
+                            TextButton(
+                              onPressed: () => Navigator.of(dCtx).pop(false),
+                              child: const Text('Cancel'),
+                            ),
+                            FilledButton(
+                              style: FilledButton.styleFrom(
+                                backgroundColor: AppColors.redDeep,
+                              ),
+                              onPressed: () => Navigator.of(dCtx).pop(true),
+                              child: const Text('Delete'),
+                            ),
+                          ],
+                        ),
+                      );
+                      if (sure != true) return;
+                      _svc.remove(c.id);
+                      setState(() {});
+                    },
                   ),
-                  onPressed: () {
-                    _svc.remove(c.id);
-                    setState(() {});
-                  },
-                ),
+                ],
               ],
             ),
           const SizedBox(height: 8),
@@ -2028,6 +2088,180 @@ class _CustomConnectionsCardState extends State<_CustomConnectionsCard> {
           ),
         ],
       ),
+    );
+  }
+}
+
+// ── UI audit 2026-11-06 P1-2: the Global System Prompt field holds
+// ONE controller for its lifetime. The old inline build created a
+// new controller on every keystroke and forced the cursor to the
+// end, making mid-text edits impossible. External changes (clear
+// button, chat restore) sync in only while the field is unfocused.
+class _SystemPromptField extends StatefulWidget {
+  const _SystemPromptField({required this.chatCtrl});
+  final ChatController chatCtrl;
+
+  @override
+  State<_SystemPromptField> createState() => _SystemPromptFieldState();
+}
+
+class _SystemPromptFieldState extends State<_SystemPromptField> {
+  late final TextEditingController _ctrl;
+  final FocusNode _focus = FocusNode();
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = TextEditingController(text: widget.chatCtrl.systemPrompt.value);
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    _focus.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Obx(() {
+      final external = widget.chatCtrl.systemPrompt.value;
+      if (!_focus.hasFocus && _ctrl.text != external) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted && !_focus.hasFocus && _ctrl.text != external) {
+            _ctrl.text = external;
+          }
+        });
+      }
+      return TextField(
+        controller: _ctrl,
+        focusNode: _focus,
+        maxLines: 4,
+        style: TextStyle(fontSize: 14, color: context.text, height: 1.5),
+        decoration: InputDecoration(
+          hintText: 'e.g. You are a helpful assistant...',
+          hintStyle: TextStyle(color: context.textD),
+          filled: true,
+          fillColor: context.bgInput,
+          border: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(12),
+            borderSide: BorderSide(color: context.border),
+          ),
+          enabledBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(12),
+            borderSide: BorderSide(color: context.border),
+          ),
+          focusedBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(12),
+            borderSide: const BorderSide(color: AppColors.accent),
+          ),
+        ),
+        onChanged: (v) => widget.chatCtrl.setGlobalSystemPrompt(v),
+      );
+    });
+  }
+}
+
+// ── UI audit 2026-11-06 P1-3: the port field gets a visible Apply
+// button. The iOS number keyboard has no Return key, so the old
+// onFieldSubmitted-only flow could never be committed on iPhone.
+class _PortField extends StatefulWidget {
+  const _PortField({required this.apiServer});
+  final LocalApiServerService apiServer;
+
+  @override
+  State<_PortField> createState() => _PortFieldState();
+}
+
+class _PortFieldState extends State<_PortField> {
+  late final TextEditingController _ctrl;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = TextEditingController(
+      text: widget.apiServer.port.value.toString(),
+    );
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _apply() async {
+    final parsed = int.tryParse(_ctrl.text.trim());
+    if (parsed == null || parsed < 1024 || parsed > 65535) {
+      Get.snackbar(
+        'Invalid Port',
+        'Choose a port from 1024 to 65535.',
+        snackPosition: SnackPosition.BOTTOM,
+      );
+      return;
+    }
+    try {
+      await widget.apiServer.setPort(parsed);
+      Get.snackbar(
+        'Local API Updated',
+        'Base URL is ${widget.apiServer.baseUrl}',
+        snackPosition: SnackPosition.BOTTOM,
+      );
+    } catch (e) {
+      Get.snackbar(
+        'Local API Error',
+        'The port could not be applied. If the server is running, stop it and try again.',
+        snackPosition: SnackPosition.BOTTOM,
+      );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Expanded(
+          child: TextField(
+            controller: _ctrl,
+            keyboardType: TextInputType.number,
+            style: TextStyle(color: context.text, fontSize: 13),
+            decoration: InputDecoration(
+              labelText: 'Port',
+              helperText: 'Use API key "local" in clients that require one.',
+              labelStyle: TextStyle(color: context.textM),
+              helperStyle: TextStyle(color: context.textD, fontSize: 11),
+              filled: true,
+              fillColor: context.bgInput,
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(8),
+                borderSide: BorderSide(color: context.border),
+              ),
+              enabledBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(8),
+                borderSide: BorderSide(color: context.border),
+              ),
+              focusedBorder: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(8),
+                borderSide: const BorderSide(color: AppColors.accent),
+              ),
+            ),
+            onSubmitted: (_) => _apply(),
+          ),
+        ),
+        const SizedBox(width: 10),
+        Padding(
+          padding: const EdgeInsets.only(top: 4),
+          child: FilledButton(
+            onPressed: _apply,
+            style: FilledButton.styleFrom(
+              backgroundColor: AppColors.accent,
+              minimumSize: const Size(72, 44),
+            ),
+            child: const Text('Apply'),
+          ),
+        ),
+      ],
     );
   }
 }

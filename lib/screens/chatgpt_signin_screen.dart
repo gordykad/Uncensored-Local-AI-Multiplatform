@@ -25,6 +25,7 @@ class _ChatGptSignInScreenState extends State<ChatGptSignInScreen> {
   /// One-shot: the authorization code is single-use - a repeated
   /// or replayed callback navigation must never exchange twice.
   bool _handled = false;
+  bool _exchanging = false;
 
   @override
   void initState() {
@@ -109,7 +110,10 @@ class _ChatGptSignInScreenState extends State<ChatGptSignInScreen> {
       }
       return;
     }
-    setState(() => _loading = true);
+    setState(() {
+      _loading = true;
+      _exchanging = true;
+    });
     try {
       await ChatGptService().exchangeCode(code, _attempt.verifier);
       if (mounted) Navigator.of(context).pop(true);
@@ -117,6 +121,7 @@ class _ChatGptSignInScreenState extends State<ChatGptSignInScreen> {
       if (mounted) {
         setState(() {
           _loading = false;
+          _exchanging = false;
           // Sanitized only: arbitrary exception text (e.g. a JSON
           // parse failure over a token response) can embed
           // credential fragments - never render it.
@@ -148,6 +153,21 @@ class _ChatGptSignInScreenState extends State<ChatGptSignInScreen> {
               color: AppColors.accent,
               backgroundColor: Colors.transparent,
             ),
+          if (_exchanging)
+            Positioned(
+              left: 0,
+              right: 0,
+              bottom: 0,
+              child: Container(
+                color: AppColors.darkBgPanel,
+                padding: const EdgeInsets.all(14),
+                child: const Text(
+                  'Finishing sign-in...',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: AppColors.darkTextM, fontSize: 13),
+                ),
+              ),
+            ),
           if (_error != null)
             Container(
               color: AppColors.darkBg,
@@ -163,9 +183,41 @@ class _ChatGptSignInScreenState extends State<ChatGptSignInScreen> {
                           color: AppColors.darkText, fontSize: 14),
                     ),
                     const SizedBox(height: 16),
-                    FilledButton(
-                      onPressed: () => Navigator.of(context).pop(false),
-                      child: const Text('Back'),
+                    // UI audit 2026-11-06 P2-8: failure offered only
+                    // Back. Retry starts a fresh PKCE attempt and
+                    // reloads, in place.
+                    Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        OutlinedButton(
+                          onPressed: () =>
+                              Navigator.of(context).pop(false),
+                          style: OutlinedButton.styleFrom(
+                            foregroundColor: AppColors.darkText,
+                            side: const BorderSide(
+                                color: AppColors.darkBorder),
+                            minimumSize: const Size(96, 44),
+                          ),
+                          child: const Text('Back'),
+                        ),
+                        const SizedBox(width: 12),
+                        FilledButton(
+                          onPressed: () {
+                            setState(() {
+                              _error = null;
+                              _handled = false;
+                              _loading = true;
+                              _attempt = ChatGptService().beginSignIn();
+                            });
+                            _ctrl.loadRequest(_attempt.url);
+                          },
+                          style: FilledButton.styleFrom(
+                            backgroundColor: AppColors.accent,
+                            minimumSize: const Size(96, 44),
+                          ),
+                          child: const Text('Retry'),
+                        ),
+                      ],
                     ),
                   ],
                 ),

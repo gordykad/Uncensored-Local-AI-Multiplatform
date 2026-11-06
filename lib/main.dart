@@ -91,6 +91,17 @@ class PortableAIApp extends StatelessWidget {
       initialBinding: AppBindings(),
       initialRoute: AppRoutes.splash,
       getPages: AppRoutes.pages,
+      // UI audit 2026-11-06 P1-1: clamp the system text scaler ONCE
+      // here; TS styles return base sizes and Text scales a single
+      // time against this clamped scaler.
+      builder: (context, child) => MediaQuery(
+        data: MediaQuery.of(context).copyWith(
+          textScaler: MediaQuery.of(
+            context,
+          ).textScaler.clamp(minScaleFactor: 0.85, maxScaleFactor: 1.35),
+        ),
+        child: child ?? const SizedBox.shrink(),
+      ),
     );
   }
 }
