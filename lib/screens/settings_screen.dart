@@ -1354,7 +1354,7 @@ class _HardwareSettingsCardState extends State<_HardwareSettingsCard> {
             ),
             const SizedBox(height: 4),
             Text(
-              'GPU cache for hot experts - the speed lever for MoE models. Turning it on also disables CPU weight repacking, the ticket 12 safety rule.',
+              'On iPhone the expert cache is NOT a speed cache (unified memory). Its job: turning it on disables CPU weight repacking, so experts stay file-backed and pageable - the ticket 12 safety rule. Requires Host Expert Layers on and a Metal load.',
               style: TextStyle(color: context.textD, fontSize: 11, height: 1.4),
             ),
           ],

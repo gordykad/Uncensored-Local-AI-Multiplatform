@@ -13,8 +13,14 @@ import '../models/ai_model_info.dart';
 class GgufHeader {
   final String? name;
   final String? architecture;
+  final int? expertCount;
   final int? contextLength;
-  const GgufHeader({this.name, this.architecture, this.contextLength});
+  const GgufHeader({
+    this.name,
+    this.architecture,
+    this.contextLength,
+    this.expertCount,
+  });
 }
 
 class _Reader {
@@ -164,13 +170,15 @@ Future<GgufHeader?> readGgufHeader(File file) async {
     String? name;
     String? arch;
     int? ctx;
+    int? experts;
     for (var i = 0; i < kvCount; i++) {
       final key = r.str();
       final type = r.u32();
       final wanted =
           key == 'general.name' ||
           key == 'general.architecture' ||
-          key.endsWith('.context_length');
+          key.endsWith('.context_length') ||
+          key.endsWith('.expert_count');
       if (!wanted) {
         r.skipValue(type);
         continue;
@@ -179,8 +187,14 @@ Future<GgufHeader?> readGgufHeader(File file) async {
       if (key == 'general.name' && v is String) name = v;
       if (key == 'general.architecture' && v is String) arch = v;
       if (key.endsWith('.context_length') && v is num) ctx = v.toInt();
+      if (key.endsWith('.expert_count') && v is num) experts = v.toInt();
     }
-    return GgufHeader(name: name, architecture: arch, contextLength: ctx);
+    return GgufHeader(
+      name: name,
+      architecture: arch,
+      contextLength: ctx,
+      expertCount: experts,
+    );
   } catch (_) {
     return null;
   } finally {
@@ -219,6 +233,7 @@ class ModelClassifier {
     'vision',
     'reasoning',
     'base',
+    'moe',
   ];
 
   /// Capability tags from the header + filename markers.
@@ -256,6 +271,13 @@ class ModelClassifier {
     }
     if (has(['r1', 'thinking', 'reasoner', 'reasoning', 'qwq'])) {
       tags.add('reasoning');
+    }
+    // MoE: the header's expert_count is the ground truth; the
+    // A4B/A3B name shapes are the fallback for headers the walk
+    // could not finish.
+    if ((header?.expertCount ?? 0) > 0 ||
+        has(['a4b', 'a3b', 'moe', '-a17b', 'a10b'])) {
+      tags.add('moe');
     }
     if (has(['instruct', '-it', '_it', ' it ', 'chat', 'assistant'])) {
       tags.add('chat');

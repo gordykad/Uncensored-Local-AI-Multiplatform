@@ -31,6 +31,13 @@ workflows:
             --type IOS_APP_STORE \
             --certificate-key @env:CERTIFICATE_PRIVATE_KEY \
             --create
+          # Ticket 23: the Live Activity extension is its own
+          # bundle ID and needs its own App Store profile, or the
+          # archive refuses it (build 64's exact error).
+          app-store-connect fetch-signing-files "com.seven.portableai.MiniXLiveActivity" \
+            --type IOS_APP_STORE \
+            --certificate-key @env:CERTIFICATE_PRIVATE_KEY \
+            --create
       - name: Add certificates to keychain
         script: keychain add-certificates
       - name: Set up code signing on Xcode project

@@ -8,6 +8,7 @@ import 'package:path/path.dart' as p;
 import 'wakelock_service.dart';
 import 'memory_probe.dart';
 import 'chat_storage_service.dart';
+import 'model_classifier.dart';
 import 'log_service.dart';
 
 /// Wraps llamadart's LlamaEngine for model loading, generation, and lifecycle.
@@ -239,6 +240,20 @@ class LlmService extends GetxService {
               ? FlashAttention.enabled
               : FlashAttention.auto,
       };
+      // Tickets 12 + 19, scoped per Claude's audit (2026-11-05):
+      // llamadart THROWS when cpuMoeLayers != 0 on a model with no
+      // experts, so the global knobs may only reach MoE loads. The
+      // header read is the ground truth (expert_count > 0). The
+      // cache additionally requires host-expert layers AND at
+      // least one offloaded GPU layer, or the load throws too.
+      final loadHeader = await readGgufHeader(file);
+      final isMoe = (loadHeader?.expertCount ?? 0) > 0;
+      final appliedCpuMoe = isMoe ? storage.cpuMoeLayers : 0;
+      var appliedCacheBytes = isMoe ? storage.moeCacheMb * 1024 * 1024 : 0;
+      if (appliedCacheBytes > 0 &&
+          (appliedCpuMoe == 0 || effectiveGpuLayers == 0)) {
+        appliedCacheBytes = 0;
+      }
       final params = ModelParams(
         contextSize: contextSize,
         gpuLayers: effectiveGpuLayers,
@@ -246,15 +261,15 @@ class LlmService extends GetxService {
         numberOfThreads: threads,
         numberOfThreadsBatch: threads,
         flashAttention: flash,
-        // Tickets 12 + 19: MoE expert placement. Dormant at the
-        // shipped defaults (0/0); a cache budget also turns CPU
-        // weight repacking off inside llamadart (ticket 12).
-        cpuMoeLayers: storage.cpuMoeLayers,
-        moeCacheBytes: storage.moeCacheMb * 1024 * 1024,
+        // Tickets 12 + 19: MoE expert placement (scoped above).
+        // A cache budget also turns CPU weight repacking off
+        // inside llamadart (ticket 12's safety rule).
+        cpuMoeLayers: appliedCpuMoe,
+        moeCacheBytes: appliedCacheBytes,
       );
 
       log?.info(
-        'Backend=$parsedBackend, GPU layers=$effectiveGpuLayers (stored $userGpuLayers), ctx=$contextSize, threads=$threads, cpuMoe=${storage.cpuMoeLayers}, moeCacheMb=${storage.moeCacheMb}',
+        'Backend=$parsedBackend, GPU layers=$effectiveGpuLayers (stored $userGpuLayers), ctx=$contextSize, threads=$threads, moe=$isMoe, cpuMoe=$appliedCpuMoe (stored ${storage.cpuMoeLayers}), moeCacheBytes=$appliedCacheBytes (stored ${storage.moeCacheMb} MB)',
         source: 'LLM',
       );
 
