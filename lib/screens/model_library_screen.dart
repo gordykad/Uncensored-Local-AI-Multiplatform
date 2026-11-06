@@ -331,10 +331,12 @@ class _ModelLibraryBodyState extends State<_ModelLibraryBody> {
                                   // card waits for the FULL fan-out.
                                   // The pack's fan transitions run
                                   // ~1.2s plus a 40ms-per-depth
-                                  // stagger, so 1.4s lands just as
-                                  // the last file settles.
+                                  // stagger; 1.4s read a tiny bit
+                                  // late on Kai's phone (1.20.8), so
+                                  // the card fires at 1.25s, right
+                                  // on the visible settle.
                                   _folderCardTimer = Timer(
-                                    const Duration(milliseconds: 1400),
+                                    const Duration(milliseconds: 1250),
                                     () {
                                       if (!mounted) return;
                                       _folderContentsCard(
