@@ -6,4 +6,4 @@
 /// drift from each other again (the 1.14.1 stale-string audit
 /// failure was three hand-edited spots). Bump both together -
 /// the IPA audit verifies the served value against the build.
-const String kAppVersion = '1.19.1';
+const String kAppVersion = '1.19.2';
