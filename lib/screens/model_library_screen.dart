@@ -446,6 +446,11 @@ class _ModelLibraryBodyState extends State<_ModelLibraryBody> {
                             ? () => _tagEditor(context, model)
                             : null,
                         child: ModelCard(
+                          onMore: model.hasRemoteUrl
+                              ? () => _pinSheet(context, model)
+                              : model.isCustom
+                              ? () => _tagEditor(context, model)
+                              : null,
                           model: model,
                           isDownloaded: isDl,
                           isCurrentlyDownloading: isActiveDownload,

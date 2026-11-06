@@ -1,4 +1,5 @@
 import 'dart:async';
+import '../app_version.dart';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
@@ -801,7 +802,7 @@ class LocalApiServerService extends GetxService {
   // token, on loopback too. The token is generated on first use and
   // shown in the API screen; regenerating invalidates the old one.
 
-  static const appVersion = '1.18.1';
+  static const appVersion = kAppVersion;
 
   String get adminToken {
     var token = _storage.adminToken;

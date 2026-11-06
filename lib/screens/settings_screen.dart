@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
+import '../app_version.dart';
 import 'package:get/get.dart';
 
 import '../theme/app_colors.dart';
@@ -833,7 +834,7 @@ class _SettingsBody extends StatelessWidget {
                     ),
                     const SizedBox(height: 10),
                     Text(
-                      'Astro MiniX 1.18.1 \u00b7 Powered by llamadart + llama.cpp',
+                      'Astro MiniX $kAppVersion · Powered by llamadart + llama.cpp',
                       style: TextStyle(fontSize: 11, color: context.textD),
                     ),
                   ],

@@ -23,6 +23,11 @@ class ModelCard extends StatelessWidget {
   final VoidCallback? onCancelLoad;
   final VoidCallback? onUnload;
 
+  /// Design audit #11: a visible alternative to the card's
+  /// long-press menu (gesture alternatives). When set, a 44pt
+  /// more-button renders in the header and opens the same sheet.
+  final VoidCallback? onMore;
+
   const ModelCard({
     super.key,
     required this.model,
@@ -41,6 +46,7 @@ class ModelCard extends StatelessWidget {
     this.onAddLink,
     this.onCancelLoad,
     this.onUnload,
+    this.onMore,
   });
 
   @override
@@ -66,25 +72,48 @@ class ModelCard extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             // ── Header row ────────────────────────────────────────
-            Wrap(
-              spacing: 6,
-              runSpacing: 6,
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                _labelBadge(model.label, model.isUncensored),
-                if (model.badge.isNotEmpty) _accentBadge(model.badge),
-                if (isLoaded)
-                  _statusBadge('LOADED', AppColors.green, Icons.check_circle),
-                if (isLoadingModel)
-                  _statusBadge(
-                    'LOADING',
-                    AppColors.orange,
-                    Icons.hourglass_top_rounded,
+                Expanded(
+                  child: Wrap(
+                    spacing: 6,
+                    runSpacing: 6,
+                    children: [
+                      _labelBadge(model.label, model.isUncensored),
+                      if (model.badge.isNotEmpty) _accentBadge(model.badge),
+                      if (isLoaded)
+                        _statusBadge(
+                          'LOADED',
+                          AppColors.green,
+                          Icons.check_circle,
+                        ),
+                      if (isLoadingModel)
+                        _statusBadge(
+                          'LOADING',
+                          AppColors.orange,
+                          Icons.hourglass_top_rounded,
+                        ),
+                      if (isCurrentlyDownloading)
+                        _statusBadge(
+                          'DOWNLOADING',
+                          AppColors.orange,
+                          Icons.downloading_rounded,
+                        ),
+                    ],
                   ),
-                if (isCurrentlyDownloading)
-                  _statusBadge(
-                    'DOWNLOADING',
-                    AppColors.orange,
-                    Icons.downloading_rounded,
+                ),
+                if (onMore != null)
+                  IconButton(
+                    onPressed: onMore,
+                    icon: const Icon(Icons.more_horiz, size: 20),
+                    color: context.textM,
+                    tooltip: 'Model options',
+                    constraints: const BoxConstraints(
+                      minWidth: 44,
+                      minHeight: 44,
+                    ),
+                    padding: EdgeInsets.zero,
                   ),
               ],
             ),
