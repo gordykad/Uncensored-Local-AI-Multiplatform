@@ -25,13 +25,59 @@ class ChatGptService {
   static const redirectUri = 'http://localhost:1455/auth/callback';
   static const _backend = 'https://chatgpt.com/backend-api';
 
-  /// Verified-seeded fallback slugs (the picker models the Codex
-  /// surface exposes); fetchModels replaces these when it can.
-  static const fallbackModels = ['gpt-5.5', 'gpt-5.4'];
+  /// Fallback slugs, current as of 2026-11-05 (the Codex catalog
+  /// rotates fast: gpt-5.4 retired for ChatGPT sign-in 2026-08-31,
+  /// gpt-5.5 on 2026-10-14 - both answered Kai's first chats with
+  /// the backend's "not supported" 400). fetchModels replaces this
+  /// with the account's live entitled list whenever it can; the
+  /// order here is best-first, gpt-6.1-sol is OpenAI's named
+  /// successor to 5.5 for Plus/Pro accounts.
+  static const fallbackModels = [
+    'gpt-6.1-sol',
+    'gpt-6-astra',
+    'gpt-6.1-terra',
+    'gpt-6-luna',
+    'gpt-5.6-sol',
+    'gpt-5.6-terra',
+    'gpt-5.6-luna',
+  ];
+
+  /// Slugs the backend has retired for ChatGPT sign-in - a stored
+  /// pick of one of these can never answer again.
+  static const _retiredModels = {'gpt-5.5', 'gpt-5.4', 'gpt-5.4-mini'};
+
+  /// One-time heal: a stored model pick from the retired set (the
+  /// 1.20.0 fallback seeded gpt-5.5) resets to the current default,
+  /// and the seeded picker connection follows. Runs on service use.
+  void healStoredModel() {
+    final m = _box.get('chat_model') as String?;
+    if (m == null || !_retiredModels.contains(m)) return;
+    _box.put('chat_model', fallbackModels.first);
+    try {
+      final box = Hive.box('connections');
+      final raw = box.get('items') as List?;
+      if (raw == null) return;
+      var changed = false;
+      final items = raw.map((e) {
+        final map = Map<String, dynamic>.from(e as Map);
+        if (map['id'] == 'chatgpt-sub' &&
+            _retiredModels.contains(map['model']?.toString())) {
+          map['model'] = fallbackModels.first;
+          changed = true;
+        }
+        return map;
+      }).toList();
+      if (changed) box.put('items', items);
+    } catch (_) {}
+  }
 
   Box get _box => Hive.box('chatgpt');
 
   bool get isSignedIn => (_box.get('refresh_token') as String?)?.isNotEmpty ?? false;
+
+  ChatGptService() {
+    healStoredModel();
+  }
 
   String get email => _box.get('email', defaultValue: '') as String;
   String get accountId => _box.get('account_id', defaultValue: '') as String;
@@ -183,7 +229,7 @@ class ChatGptService {
       final headers = await _headers();
       final resp = await http
           .get(
-            Uri.parse('$_backend/codex/models?client_version=0.59.0'),
+            Uri.parse('$_backend/codex/models?client_version=1.0.0'),
             headers: headers,
           )
           .timeout(const Duration(seconds: 20));
