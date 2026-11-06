@@ -1,7 +1,7 @@
 name: portable_ai_flutter
 description: "Portable AI — Run uncensored local LLMs natively on any device."
 publish_to: 'none'
-version: 1.19.0+48
+version: 1.19.1+49
 
 environment:
   sdk: ^3.11.4

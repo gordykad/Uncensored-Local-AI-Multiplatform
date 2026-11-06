@@ -67,11 +67,13 @@ final class MiniXLiveActivity {
       Task { await act.end(using: state, dismissalPolicy: .immediate) }
       return
     }
+    // Dismissal: .default lets the finished card linger until the
+    // system clears it. (The timed .after(Date) dismissal policy
+    // is iOS 17+; the 16.x enum carries only .default/.immediate.)
     let state = MiniXDownloadAttributes.ContentState(
       progress: ok ? 1 : -1,
       receivedGb: 0, totalGb: 0,
       state: ok ? "done" : "failed")
-    let dismissAt = Date().addingTimeInterval(ok ? 8 : 6)
-    Task { await act.end(using: state, dismissalPolicy: .after(dismissAt)) }
+    Task { await act.end(using: state, dismissalPolicy: .default) }
   }
 }
