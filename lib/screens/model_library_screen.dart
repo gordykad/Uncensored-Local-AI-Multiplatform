@@ -112,6 +112,7 @@ class _ModelLibraryBodyState extends State<_ModelLibraryBody> {
   @override
   void dispose() {
     _wakePoll?.cancel();
+    _folderCardTimer?.cancel();
     _searchCtrl.dispose();
     _collectionsPager.dispose();
     super.dispose();
@@ -307,8 +308,10 @@ class _ModelLibraryBodyState extends State<_ModelLibraryBody> {
                         return PageView.builder(
                           controller: _collectionsPager,
                           itemCount: cols.length,
-                          onPageChanged: (i) =>
-                              setState(() => _collectionsPage = i),
+                          onPageChanged: (i) {
+                            _folderCardTimer?.cancel();
+                            setState(() => _collectionsPage = i);
+                          },
                           itemBuilder: (context, i) {
                             final c = cols[i];
                             return Center(
@@ -321,7 +324,33 @@ class _ModelLibraryBodyState extends State<_ModelLibraryBody> {
                                   for (final f in c.files)
                                     (name: f.name, meta: f.meta),
                                 ],
+                                onOpenChange: (open) {
+                                  _folderCardTimer?.cancel();
+                                  if (!open) return;
+                                  // Kai's 1.20.7 note: the contents
+                                  // card waits for the FULL fan-out.
+                                  // The pack's fan transitions run
+                                  // ~1.2s plus a 40ms-per-depth
+                                  // stagger, so 1.4s lands just as
+                                  // the last file settles.
+                                  _folderCardTimer = Timer(
+                                    const Duration(milliseconds: 1400),
+                                    () {
+                                      if (!mounted) return;
+                                      _folderContentsCard(
+                                        context,
+                                        ctrl,
+                                        c.label,
+                                        c.files,
+                                      );
+                                    },
+                                  );
+                                },
                                 onFileSelect: (idx) {
+                                  // A file tap inside the window
+                                  // means Kai already picked — the
+                                  // pending card stands down.
+                                  _folderCardTimer?.cancel();
                                   if (idx < 0 || idx >= c.files.length) {
                                     return;
                                   }
@@ -964,6 +993,11 @@ class _ModelLibraryBodyState extends State<_ModelLibraryBody> {
   bool _wakeWarming = false;
   Timer? _wakePoll;
 
+  /// 1.20.7: pending folder-contents card, armed when a folder
+  /// fans out and cancelled by a file tap, a page swipe, or the
+  /// folder closing again.
+  Timer? _folderCardTimer;
+
   void _startWakePoll() {
     _wakePoll?.cancel();
     _wakePoll = Timer.periodic(const Duration(seconds: 12), (_) async {
@@ -1243,6 +1277,149 @@ class _ModelLibraryBodyState extends State<_ModelLibraryBody> {
           : null,
       onLongPress: () => _seatVerifySheet(context, s),
     );
+  }
+
+  /// 1.20.7: the card that pops once a folder's fan-out has
+  /// fully played — every model in the folder, searchable.
+  /// Picking a local model lands on its card in the list (the
+  /// same focus a fanned-file tap gives); picking a fleet seat
+  /// opens its provider's fleet sheet filtered to it.
+  void _folderContentsCard(
+    BuildContext context,
+    ModelController ctrl,
+    String label,
+    List<({String name, String meta, AiModelInfo? model, MeshSeat? seat})>
+    files,
+  ) {
+    final searchCtrl = TextEditingController();
+    var query = '';
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: context.bgPanel,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
+      ),
+      builder: (sheetCtx) => StatefulBuilder(
+        builder: (sheetCtx, setSheet) {
+          final q = query.trim().toLowerCase();
+          final shown = q.isEmpty
+              ? files
+              : files.where((f) => f.name.toLowerCase().contains(q)).toList();
+          return SafeArea(
+            child: SizedBox(
+              height: MediaQuery.of(sheetCtx).size.height * 0.92,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(20, 18, 20, 0),
+                    child: Text(
+                      label,
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w600,
+                        color: sheetCtx.text,
+                      ),
+                    ),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(20, 4, 20, 0),
+                    child: Text(
+                      '${files.length} ${files.length == 1 ? 'model' : 'models'} in this collection',
+                      style: TextStyle(fontSize: 12, color: sheetCtx.textM),
+                    ),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+                    child: TextField(
+                      controller: searchCtrl,
+                      onChanged: (v) => setSheet(() => query = v),
+                      style: TextStyle(color: sheetCtx.text, fontSize: 14),
+                      decoration: InputDecoration(
+                        hintText: 'Search this collection',
+                        hintStyle: TextStyle(color: sheetCtx.textD),
+                        prefixIcon: Icon(
+                          Icons.search,
+                          size: 18,
+                          color: sheetCtx.textD,
+                        ),
+                        filled: true,
+                        fillColor: sheetCtx.bgInput,
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: BorderSide(color: sheetCtx.border),
+                        ),
+                        enabledBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: BorderSide(color: sheetCtx.border),
+                        ),
+                      ),
+                    ),
+                  ),
+                  Expanded(
+                    child: ListView.builder(
+                      padding: const EdgeInsets.fromLTRB(16, 4, 16, 20),
+                      itemCount: shown.length,
+                      itemBuilder: (rowCtx, i) {
+                        final f = shown[i];
+                        return ListTile(
+                          contentPadding: const EdgeInsets.symmetric(
+                            horizontal: 4,
+                          ),
+                          title: Text(
+                            f.name,
+                            style: TextStyle(
+                              color: sheetCtx.text,
+                              fontSize: 14,
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          subtitle: Text(
+                            f.meta,
+                            style: TextStyle(
+                              color: sheetCtx.textM,
+                              fontSize: 11,
+                            ),
+                          ),
+                          trailing: Icon(
+                            Icons.chevron_right,
+                            size: 18,
+                            color: sheetCtx.textD,
+                          ),
+                          onTap: () {
+                            Navigator.of(sheetCtx).pop();
+                            final seat = f.seat;
+                            if (seat != null) {
+                              _fleetSheet(
+                                context,
+                                ctrl,
+                                seat.lane,
+                                initialQuery: seat.model,
+                              );
+                              return;
+                            }
+                            _searchCtrl.text = f.name;
+                            setState(() {
+                              _folderFocus = (
+                                collection: label,
+                                model: f.name,
+                              );
+                              _query = f.name;
+                            });
+                          },
+                        );
+                      },
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          );
+        },
+      ),
+    ).then((_) => searchCtrl.dispose());
   }
 
   /// Ticket 34: one provider's whole fleet in a sheet of its

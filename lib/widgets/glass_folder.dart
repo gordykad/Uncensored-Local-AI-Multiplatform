@@ -20,6 +20,12 @@ class GlassFolderPack extends StatefulWidget {
   final List<({String name, String meta})> files;
   final void Function(int index)? onFileSelect;
 
+  /// The pack posts onOpenChange over the same bridge (its event
+  /// allowlist carries it); args[0] is the new open state. Dart
+  /// used to ignore it — 1.20.7 listens so the screen can wait
+  /// out the fan-out animation before presenting anything.
+  final void Function(bool open)? onOpenChange;
+
   const GlassFolderPack({
     super.key,
     required this.label,
@@ -27,6 +33,7 @@ class GlassFolderPack extends StatefulWidget {
     required this.files,
     this.seed = 3,
     this.onFileSelect,
+    this.onOpenChange,
   });
 
   @override
@@ -108,6 +115,11 @@ class _GlassFolderPackState extends State<GlassFolderPack> {
               final args = d['args'] as List?;
               if (args != null && args.length > 1 && args[1] is num) {
                 widget.onFileSelect?.call((args[1] as num).toInt());
+              }
+            } else if (d['type'] == 'event' && d['name'] == 'onOpenChange') {
+              final args = d['args'] as List?;
+              if (args != null && args.isNotEmpty) {
+                widget.onOpenChange?.call(args[0] == true);
               }
             }
           } catch (_) {}
