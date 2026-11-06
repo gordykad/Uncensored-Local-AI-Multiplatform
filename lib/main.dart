@@ -12,6 +12,7 @@ import 'theme/app_theme.dart';
 import 'bindings/app_bindings.dart';
 import 'controllers/theme_controller.dart';
 import 'services/log_service.dart';
+import 'services/chatgpt_service.dart';
 // ignore: unused_import
 import 'screens/splash_screen.dart'; // needed in routes/app_routes.dart
 import 'routes/app_routes.dart';
@@ -51,7 +52,8 @@ Future<void> main() async {
     await Hive.openBox('imagegen'); // ticket 28 entries + lane keys (device-local)
     await Hive.openBox('mesh'); // ticket 31 catalog cache (no keys, ever)
     await Hive.openBox('connections'); // ticket 31 custom connections + Kai's pasted keys (device-local)
-    await Hive.openBox('chatgpt'); // ticket 33 ChatGPT subscription tokens (device-local)
+    await Hive.openBox('chatgpt'); // ticket 33 ChatGPT lane prefs + session flag (tokens live in the Keychain, 1.20.3)
+    await ChatGptService.migrateLegacy(); // move any pre-1.20.3 plaintext Hive tokens into the Keychain
 
     // Load theme preference
     final themeController = Get.put(ThemeController());

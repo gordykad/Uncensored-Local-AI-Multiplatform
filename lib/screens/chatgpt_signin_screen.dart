@@ -22,6 +22,10 @@ class _ChatGptSignInScreenState extends State<ChatGptSignInScreen> {
   bool _loading = true;
   String? _error;
 
+  /// One-shot: the authorization code is single-use - a repeated
+  /// or replayed callback navigation must never exchange twice.
+  bool _handled = false;
+
   @override
   void initState() {
     super.initState();
@@ -38,10 +42,20 @@ class _ChatGptSignInScreenState extends State<ChatGptSignInScreen> {
             if (mounted) setState(() => _loading = false);
           },
           onNavigationRequest: (req) {
-            final url = req.url;
-            if (url.startsWith(ChatGptService.redirectUri)) {
-              _handleCallback(url);
-              return NavigationDecision.prevent;
+            // Exact callback match only (1.20.3 audit hardening):
+            // main-frame, scheme/host/port/path all equal to the
+            // registered loopback redirect - a prefix match also
+            // accepted /auth/callback-extra and subframe loads.
+            if (req.isMainFrame) {
+              final uri = Uri.tryParse(req.url);
+              if (uri != null &&
+                  uri.scheme == 'http' &&
+                  uri.host == 'localhost' &&
+                  uri.port == 1455 &&
+                  uri.path == '/auth/callback') {
+                _handleCallback(uri);
+                return NavigationDecision.prevent;
+              }
             }
             return NavigationDecision.navigate;
           },
@@ -59,21 +73,34 @@ class _ChatGptSignInScreenState extends State<ChatGptSignInScreen> {
       ..loadRequest(_attempt.url);
   }
 
-  Future<void> _handleCallback(String url) async {
-    final uri = Uri.tryParse(url);
-    final code = uri?.queryParameters['code'] ?? '';
-    final state = uri?.queryParameters['state'] ?? '';
-    final err = uri?.queryParameters['error'] ?? '';
-    if (err.isNotEmpty) {
+  Future<void> _handleCallback(Uri uri) async {
+    if (_handled) return;
+    _handled = true;
+    final code = uri.queryParameters['code'] ?? '';
+    final state = uri.queryParameters['state'] ?? '';
+    final err = uri.queryParameters['error'] ?? '';
+    // State is validated BEFORE the error branch too: an error
+    // callback with a foreign state is not ours to display (the
+    // raw OAuth error text is never rendered either).
+    if (state != _attempt.state) {
       if (mounted) {
         setState(() {
           _loading = false;
-          _error = 'Sign-in was declined ($err).';
+          _error = 'Sign-in returned an unexpected response. Try again.';
         });
       }
       return;
     }
-    if (code.isEmpty || state != _attempt.state) {
+    if (err.isNotEmpty) {
+      if (mounted) {
+        setState(() {
+          _loading = false;
+          _error = 'Sign-in was cancelled or failed. Try again.';
+        });
+      }
+      return;
+    }
+    if (code.isEmpty) {
       if (mounted) {
         setState(() {
           _loading = false;
@@ -90,7 +117,14 @@ class _ChatGptSignInScreenState extends State<ChatGptSignInScreen> {
       if (mounted) {
         setState(() {
           _loading = false;
-          _error = e.toString().replaceFirst('Exception: ', '');
+          // Sanitized only: arbitrary exception text (e.g. a JSON
+          // parse failure over a token response) can embed
+          // credential fragments - never render it.
+          _error = e is ChatGptAuthException
+              ? e.message
+              : e is ChatGptTransientException
+                  ? e.message
+                  : 'Sign-in failed. Please try again.';
         });
       }
     }
