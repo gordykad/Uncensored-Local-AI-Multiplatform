@@ -20,6 +20,7 @@ import 'dart:convert';
 import 'package:hive/hive.dart';
 import 'package:http/http.dart' as http;
 
+import 'chatgpt_service.dart';
 import 'image_gen_service.dart';
 
 class CustomConnection {
@@ -109,6 +110,10 @@ class CustomConnectionsService {
     }
     if (conn.type == 'ollama') {
       yield* _streamOllama(conn, messages);
+    } else if (conn.type == 'chatgpt') {
+      // Ticket 33: the ChatGPT subscription seat - tokens ride the
+      // OAuth store, the connection row only carries name + model.
+      yield* ChatGptService().streamChat(model: conn.model, messages: messages);
     } else {
       yield* _streamOpenAi(conn, messages);
     }

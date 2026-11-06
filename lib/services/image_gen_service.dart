@@ -18,6 +18,8 @@ import 'package:hive/hive.dart';
 import 'package:http/http.dart' as http;
 import 'package:path_provider/path_provider.dart';
 
+import 'chatgpt_service.dart';
+
 import '../models/image_entry.dart';
 
 class ImageGenResult {
@@ -468,6 +470,21 @@ class ImageGenService {
   /// Lane A generation: Kai's RunPod serverless endpoint.
   /// Worker contract (ticket 28): input {prompt, width, height, steps, seed,
   /// model} -> output {images: [base64]} or {image_url}.
+  /// Ticket 33: one image off Kai's ChatGPT subscription (the
+  /// Responses image_generation tool). Same result shape as every
+  /// other lane; the gallery write happens in the screen.
+  Future<ImageGenResult> generateChatGpt(
+    ImageEntry e, {
+    required String prompt,
+    void Function(String phase)? onPhase,
+  }) async {
+    final bytes = await ChatGptService().generateImage(
+      prompt: prompt,
+      onPhase: onPhase,
+    );
+    return ImageGenResult(bytes, null);
+  }
+
   Future<ImageGenResult> generateRunpod(
     ImageEntry e, {
     required String prompt,

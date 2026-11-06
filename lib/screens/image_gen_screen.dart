@@ -22,6 +22,7 @@ import 'package:video_player/video_player.dart';
 
 import '../models/image_entry.dart';
 import 'gen_gallery_screen.dart';
+import '../services/chatgpt_service.dart';
 import '../services/image_gen_service.dart';
 import '../services/log_service.dart';
 import '../theme/app_colors.dart';
@@ -90,6 +91,20 @@ class _ImageGenScreenState extends State<ImageGenScreen>
         vsync: this, duration: const Duration(seconds: 6))
       ..repeat();
     _entries = _svc.localEntries();
+    // Ticket 33: the ChatGPT subscription lane rides as a synthetic
+    // entry whenever Kai is signed in - no catalog row, device-local.
+    if (ChatGptService().isSignedIn) {
+      _entries = [
+        const ImageEntry(
+          id: 'chatgpt-images',
+          name: 'ChatGPT',
+          link: '',
+          lane: 'chatgpt',
+          createdMs: 0,
+        ),
+        ..._entries,
+      ];
+    }
     _current = _entries.isNotEmpty ? _entries.first : null;
     _diag('initState entries=${_entries.length} online=${_svc.connectivityOn}');
     _input.addListener(() => setState(() {}));
@@ -160,13 +175,17 @@ class _ImageGenScreenState extends State<ImageGenScreen>
       });
       _scrollDown();
       try {
-        final result = entry.isRunpod
-            ? await _svc.generateRunpod(entry,
+        final result = entry.isChatGpt
+            ? await _svc.generateChatGpt(entry,
                 prompt: item.prompt,
                 onPhase: (p) => _setPhase(item, p))
-            : await _svc.generateOwner(entry,
-                prompt: item.prompt,
-                onPhase: (p) => _setPhase(item, p));
+            : entry.isRunpod
+                ? await _svc.generateRunpod(entry,
+                    prompt: item.prompt,
+                    onPhase: (p) => _setPhase(item, p))
+                : await _svc.generateOwner(entry,
+                    prompt: item.prompt,
+                    onPhase: (p) => _setPhase(item, p));
         item.bytes = result.bytes;
         item.seed = result.seed;
         item.status = 'done';

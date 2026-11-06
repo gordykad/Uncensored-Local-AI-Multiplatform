@@ -18,7 +18,9 @@ import '../services/local_api_server_service.dart';
 import '../services/mesh_service.dart';
 import '../services/haptics.dart';
 import '../services/phone_node.dart';
+import '../services/chatgpt_service.dart';
 import '../services/custom_connections_service.dart';
+import 'chatgpt_signin_screen.dart';
 import '../services/model_manager.dart';
 import '../services/background_optimizer_service.dart';
 import '../services/chat_storage_service.dart';
@@ -665,6 +667,18 @@ class _SettingsBody extends StatelessWidget {
               ),
               const SizedBox(height: 12),
               const _MeshSettingsCard(),
+
+              const SizedBox(height: 28),
+
+              // ── ChatGPT subscription (ticket 33) ────────
+              _sectionHeader(context, 'ChatGPT'),
+              const SizedBox(height: 8),
+              Text(
+                'Chat and image generation on your ChatGPT subscription. No API key, nothing extra billed. Tokens live on this device only.',
+                style: TextStyle(fontSize: 12, color: context.textD),
+              ),
+              const SizedBox(height: 12),
+              const _ChatGptCard(),
 
               const SizedBox(height: 28),
 
@@ -1652,6 +1666,158 @@ class _MeshSettingsCardState extends State<_MeshSettingsCard> {
           ),
         ],
       ),
+    );
+  }
+}
+
+// ── Ticket 33: ChatGPT subscription card ─────────────────────
+
+class _ChatGptCard extends StatefulWidget {
+  const _ChatGptCard();
+
+  @override
+  State<_ChatGptCard> createState() => _ChatGptCardState();
+}
+
+class _ChatGptCardState extends State<_ChatGptCard> {
+  final _svc = ChatGptService();
+  List<String> _models = ChatGptService.fallbackModels;
+  bool _busy = false;
+
+  @override
+  void initState() {
+    super.initState();
+    if (_svc.isSignedIn) _loadModels();
+  }
+
+  Future<void> _loadModels() async {
+    final models = await _svc.fetchModels();
+    if (!mounted) return;
+    setState(() => _models = models);
+    if (!models.contains(_svc.chatModel)) {
+      _setModel(models.first);
+    }
+  }
+
+  /// Keep the picker's ChatGPT seat in step with the sign-in and
+  /// the chosen model: one seeded connection row, type 'chatgpt'.
+  void _seedConnection() {
+    final conns = CustomConnectionsService();
+    const id = 'chatgpt-sub';
+    final existing = conns.list().where((c) => c.id == id).toList();
+    final conn = CustomConnection(
+      id: id,
+      name: 'ChatGPT',
+      baseUrl: 'https://chatgpt.com/backend-api',
+      model: _svc.chatModel,
+      type: 'chatgpt',
+    );
+    if (existing.isEmpty) {
+      conns.add(conn);
+    } else {
+      conns.update(conn);
+    }
+  }
+
+  void _setModel(String m) {
+    _svc.chatModel = m;
+    _seedConnection();
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _signIn() async {
+    final ok = await Navigator.of(context).push<bool>(
+      MaterialPageRoute(builder: (_) => const ChatGptSignInScreen()),
+    );
+    if (ok != true || !mounted) return;
+    setState(() => _busy = true);
+    _seedConnection();
+    await _loadModels();
+    if (mounted) setState(() => _busy = false);
+  }
+
+  Future<void> _signOut() async {
+    await _svc.signOut();
+    CustomConnectionsService().remove('chatgpt-sub');
+    if (mounted) setState(() {});
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: BoxDecoration(
+        color: context.bgPanel,
+        border: Border.all(color: context.border),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      padding: const EdgeInsets.all(16),
+      child: _svc.isSignedIn ? _signedIn(context) : _signedOut(context),
+    );
+  }
+
+  Widget _signedOut(BuildContext context) {
+    return Row(
+      children: [
+        Expanded(
+          child: Text(
+            'Not signed in',
+            style: TextStyle(color: context.textM, fontSize: 13),
+          ),
+        ),
+        FilledButton(
+          onPressed: _busy ? null : _signIn,
+          child: const Text('Sign in with ChatGPT'),
+        ),
+      ],
+    );
+  }
+
+  Widget _signedIn(BuildContext context) {
+    final model = _models.contains(_svc.chatModel)
+        ? _svc.chatModel
+        : _models.first;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          _svc.email.isNotEmpty ? 'Signed in as ${_svc.email}' : 'Signed in',
+          style: TextStyle(color: context.text, fontSize: 13),
+        ),
+        const SizedBox(height: 12),
+        Row(
+          children: [
+            Text(
+              'Model',
+              style: TextStyle(color: context.textM, fontSize: 12),
+            ),
+            const Spacer(),
+            DropdownButton<String>(
+              value: model,
+              dropdownColor: context.bgPanel,
+              style: TextStyle(color: context.text, fontSize: 13),
+              items: _models
+                  .map((m) => DropdownMenuItem(value: m, child: Text(m)))
+                  .toList(),
+              onChanged: (v) {
+                if (v != null) _setModel(v);
+              },
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        Text(
+          'Pick ChatGPT in the chat model picker, and ChatGPT in the Image Gen tab for pictures.',
+          style: TextStyle(color: context.textD, fontSize: 12),
+        ),
+        const SizedBox(height: 12),
+        Align(
+          alignment: Alignment.centerRight,
+          child: TextButton(
+            onPressed: _signOut,
+            child: const Text('Sign out'),
+          ),
+        ),
+      ],
     );
   }
 }

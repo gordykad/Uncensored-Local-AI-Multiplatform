@@ -51,6 +51,7 @@ Future<void> main() async {
     await Hive.openBox('imagegen'); // ticket 28 entries + lane keys (device-local)
     await Hive.openBox('mesh'); // ticket 31 catalog cache (no keys, ever)
     await Hive.openBox('connections'); // ticket 31 custom connections + Kai's pasted keys (device-local)
+    await Hive.openBox('chatgpt'); // ticket 33 ChatGPT subscription tokens (device-local)
 
     // Load theme preference
     final themeController = Get.put(ThemeController());

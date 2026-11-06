@@ -33,6 +33,7 @@ class ImageEntry {
   });
 
   bool get isRunpod => lane == 'runpod';
+  bool get isChatGpt => lane == 'chatgpt'; // ticket 33 subscription lane
   bool get isVideo => kind == 'video';
 
   // Gradio API host for owner entries: a huggingface.co/spaces/<u>/<n> page
