@@ -303,7 +303,7 @@ class _ModelLibraryBodyState extends State<_ModelLibraryBody> {
                     height: 404,
                     child: Builder(
                       builder: (context) {
-                        final cols = _collections(allCatalog);
+                        final cols = _collections(allCatalog, _meshSeats);
                         return PageView.builder(
                           controller: _collectionsPager,
                           itemCount: cols.length,
@@ -315,21 +315,31 @@ class _ModelLibraryBodyState extends State<_ModelLibraryBody> {
                               child: GlassFolderPack(
                                 label: c.label,
                                 meta:
-                                    '${c.models.length} ${c.models.length == 1 ? 'model' : 'models'}',
+                                    '${c.files.length} ${c.files.length == 1 ? 'model' : 'models'}',
                                 seed: 3 + c.index * 4,
                                 files: [
-                                  for (final m in c.models)
-                                    (
-                                      name: m.name,
-                                      meta:
-                                          '${m.sizeGb} GB · ${_quantOf(m.filename)}',
-                                    ),
+                                  for (final f in c.files)
+                                    (name: f.name, meta: f.meta),
                                 ],
                                 onFileSelect: (idx) {
-                                  if (idx < 0 || idx >= c.models.length) {
+                                  if (idx < 0 || idx >= c.files.length) {
                                     return;
                                   }
-                                  final name = c.models[idx].name;
+                                  final file = c.files[idx];
+                                  final seat = file.seat;
+                                  if (seat != null) {
+                                    // Ticket 34: a fleet file opens
+                                    // its provider's fleet sheet,
+                                    // pre-filtered to that seat.
+                                    _fleetSheet(
+                                      context,
+                                      ctrl,
+                                      seat.lane,
+                                      initialQuery: seat.model,
+                                    );
+                                    return;
+                                  }
+                                  final name = file.name;
                                   _searchCtrl.text = name;
                                   setState(() {
                                     _folderFocus = (
@@ -357,14 +367,14 @@ class _ModelLibraryBodyState extends State<_ModelLibraryBody> {
                   // collection lives in the list below.
                   Builder(
                     builder: (context) {
-                      final cols = _collections(allCatalog);
+                      final cols = _collections(allCatalog, _meshSeats);
                       if (cols.length < 2 && cols.isEmpty) {
                         return const SizedBox.shrink();
                       }
                       final count = cols.isEmpty
                           ? 0
                           : cols[_collectionsPage.clamp(0, cols.length - 1)]
-                              .models
+                              .files
                               .length;
                       return Column(
                         children: [
@@ -488,8 +498,33 @@ class _ModelLibraryBodyState extends State<_ModelLibraryBody> {
                   const SizedBox(height: 12),
                 ],
 
-                // ── Pinned for the fleet (ticket 30) ─────
-                if (_filter == _Filter.all && _query.isEmpty)
+                // ── Ticket 34 home layout ─────────────────
+                // Folder, then what is ON the phone, then pins,
+                // then the catalog, then the fleet. The locals
+                // used to sit under ~290 inline mesh rows.
+                if (_filter == _Filter.all && _query.isEmpty) ...[
+                  if (downloaded.isNotEmpty) ...[
+                    _sectionTitle(
+                      context,
+                      'On This Phone (${downloaded.length})',
+                    ),
+                    const SizedBox(height: 12),
+                    ..._catalogCards(
+                      context,
+                      ctrl,
+                      manager,
+                      _downloadedFirst(allCatalog, downloaded, ctrl),
+                      downloaded,
+                    ),
+                    ...downloaded
+                        .where(
+                          (f) => !allCatalog.any((m) => m.filename == f),
+                        )
+                        .map((f) => _localFileCard(context, ctrl, f)),
+                    const SizedBox(height: 8),
+                  ],
+
+                  // ── Pinned for the fleet (ticket 30) ────
                   ..._pinnedSection(
                     context,
                     ctrl,
@@ -498,86 +533,46 @@ class _ModelLibraryBodyState extends State<_ModelLibraryBody> {
                     downloaded,
                   ),
 
-                // ── Mesh seats + custom connections (ticket 31) ──
-                if (_filter == _Filter.all && _query.isEmpty) ...[
+                  // ── Catalog: everything not on the phone ─
+                  if (filtered.any(
+                    (m) => !downloaded.contains(m.filename),
+                  )) ...[
+                    _sectionTitle(
+                      context,
+                      'Catalog Models (${filtered.where((m) => !downloaded.contains(m.filename)).length})',
+                    ),
+                    const SizedBox(height: 12),
+                    ..._catalogCards(
+                      context,
+                      ctrl,
+                      manager,
+                      filtered
+                          .where((m) => !downloaded.contains(m.filename))
+                          .toList(),
+                      downloaded,
+                    ),
+                  ],
+
+                  // ── Mesh + custom (ticket 31), now last ──
                   ..._meshSection(context, ctrl),
                   ..._customSection(context, ctrl),
+                ] else ...[
+                  // ── Filtered / searching: one flat list ──
+                  if (_filter == _Filter.all ||
+                      _filter == _Filter.downloaded) ...[
+                    ...downloaded
+                        .where(
+                          (f) => !allCatalog.any((m) => m.filename == f),
+                        )
+                        .map((f) => _localFileCard(context, ctrl, f)),
+                  ],
+                  _sectionTitle(
+                    context,
+                    '${_filter == _Filter.all ? "Available" : _filter.name[0].toUpperCase() + _filter.name.substring(1)} Models (${filtered.length})',
+                  ),
+                  const SizedBox(height: 12),
+                  ..._catalogCards(context, ctrl, manager, filtered, downloaded),
                 ],
-
-                // ── Local files not in catalog ──────────
-                if (_filter == _Filter.all ||
-                    _filter == _Filter.downloaded) ...[
-                  ...downloaded
-                      .where((f) => !allCatalog.any((m) => m.filename == f))
-                      .map((f) => _localFileCard(context, ctrl, f)),
-                ],
-
-                // ── Count ───────────────────────────────
-                _sectionTitle(
-                  context,
-                  '${_filter == _Filter.all ? "Available" : _filter.name[0].toUpperCase() + _filter.name.substring(1)} Models (${filtered.length})',
-                ),
-                const SizedBox(height: 12),
-
-                // ── Model cards ─────────────────────────
-                ...List.generate(filtered.length, (index) {
-                  final model = filtered[index];
-                  final isDl = downloaded.contains(model.filename);
-                  final isActiveDownload = manager.isDownloading(
-                    model.filename,
-                  );
-                  final dlState = manager.getDownloadState(model.filename);
-
-                  return Column(
-                    children: [
-                      GestureDetector(
-                        onLongPress: model.hasRemoteUrl
-                            ? () => _pinSheet(context, model)
-                            : model.isCustom
-                            ? () => _tagEditor(context, model)
-                            : null,
-                        child: ModelCard(
-                          onMore: model.hasRemoteUrl
-                              ? () => _pinSheet(context, model)
-                              : model.isCustom
-                              ? () => _tagEditor(context, model)
-                              : null,
-                          model: model,
-                          isDownloaded: isDl,
-                          isCurrentlyDownloading: isActiveDownload,
-                          downloadState: dlState,
-                          isLoaded:
-                              ctrl.selectedModelFilename.value ==
-                                  model.filename &&
-                              ctrl.isModelLoaded,
-                          isLoadingModel:
-                              ctrl.loadingModelFilename.value == model.filename,
-                          loadingStatusMsg: ctrl.loadingStatusMsg.value,
-                          loadingProgress: ctrl.loadingProgress.value,
-                          onDownload: () => ctrl.downloadModel(model),
-                          onCancelDownload: () =>
-                              ctrl.cancelDownload(model.filename),
-                          onLoad: () => ctrl.loadModel(model.filename),
-                          onDelete: () => _confirmDelete(context, ctrl, model),
-                          onRemoveCustom: () =>
-                              _confirmRemoveCustom(context, ctrl, model),
-                          onAddLink: model.isCustom
-                              ? () => _showSetLinkDialog(context, ctrl, model)
-                              : null,
-                          onCancelLoad: () => ctrl.cancelLoadModel(),
-                          onUnload: () => ctrl.unloadCurrentModel(),
-                        ),
-                      ),
-                    ],
-                  ).animate().fadeIn(
-                    // UI audit 2026-11-06 P2-7: no stagger under
-                    // Reduce Motion (zero delay + duration = static).
-                    delay: RM.off(context)
-                        ? Duration.zero
-                        : Duration(milliseconds: index * 50),
-                    duration: RM.off(context) ? Duration.zero : 250.ms,
-                  );
-                }),
 
                 const SizedBox(height: 24),
               ],
@@ -588,21 +583,146 @@ class _ModelLibraryBodyState extends State<_ModelLibraryBody> {
     );
   }
 
+  /// Ticket 34: the downloaded slice of the catalog for the On
+  /// This Phone section, loaded model first (same convention the
+  /// flat list has always used).
+  List<AiModelInfo> _downloadedFirst(
+    List<AiModelInfo> all,
+    List<String> downloaded,
+    ModelController ctrl,
+  ) {
+    final out = all.where((m) => downloaded.contains(m.filename)).toList();
+    final active = ctrl.selectedModelFilename.value;
+    if (active != null) {
+      out.sort((a, b) {
+        if (a.filename == active) return -1;
+        if (b.filename == active) return 1;
+        return 0;
+      });
+    }
+    return out;
+  }
+
+  /// One catalog card per model, exactly as the flat list has
+  /// always rendered it. Ticket 34 extracted this so the On This
+  /// Phone section and the catalog list share one implementation.
+  List<Widget> _catalogCards(
+    BuildContext context,
+    ModelController ctrl,
+    ModelManager manager,
+    List<AiModelInfo> models,
+    List<String> downloaded,
+  ) {
+    return List.generate(models.length, (index) {
+      final model = models[index];
+      final isDl = downloaded.contains(model.filename);
+      final isActiveDownload = manager.isDownloading(model.filename);
+      final dlState = manager.getDownloadState(model.filename);
+
+      return Column(
+        children: [
+          GestureDetector(
+            onLongPress: model.hasRemoteUrl
+                ? () => _pinSheet(context, model)
+                : model.isCustom
+                ? () => _tagEditor(context, model)
+                : null,
+            child: ModelCard(
+              onMore: model.hasRemoteUrl
+                  ? () => _pinSheet(context, model)
+                  : model.isCustom
+                  ? () => _tagEditor(context, model)
+                  : null,
+              model: model,
+              isDownloaded: isDl,
+              isCurrentlyDownloading: isActiveDownload,
+              downloadState: dlState,
+              isLoaded:
+                  ctrl.selectedModelFilename.value == model.filename &&
+                  ctrl.isModelLoaded,
+              isLoadingModel: ctrl.loadingModelFilename.value == model.filename,
+              loadingStatusMsg: ctrl.loadingStatusMsg.value,
+              loadingProgress: ctrl.loadingProgress.value,
+              onDownload: () => ctrl.downloadModel(model),
+              onCancelDownload: () => ctrl.cancelDownload(model.filename),
+              onLoad: () => ctrl.loadModel(model.filename),
+              onDelete: () => _confirmDelete(context, ctrl, model),
+              onRemoveCustom: () => _confirmRemoveCustom(context, ctrl, model),
+              onAddLink: model.isCustom
+                  ? () => _showSetLinkDialog(context, ctrl, model)
+                  : null,
+              onCancelLoad: () => ctrl.cancelLoadModel(),
+              onUnload: () => ctrl.unloadCurrentModel(),
+            ),
+          ),
+        ],
+      ).animate().fadeIn(
+        // UI audit 2026-11-06 P2-7: no stagger under
+        // Reduce Motion (zero delay + duration = static).
+        delay: RM.off(context)
+            ? Duration.zero
+            : Duration(milliseconds: index * 50),
+        duration: RM.off(context) ? Duration.zero : 250.ms,
+      );
+    });
+  }
+
   /// Ticket 25: folder collections — All Models plus one folder
   /// per capability tag that has at least one model.
-  List<({String label, List<AiModelInfo> models, int index})> _collections(
-    List<AiModelInfo> all,
-  ) {
-    final out = <({String label, List<AiModelInfo> models, int index})>[
-      (label: 'All Models', models: all, index: 0),
-    ];
+  List<
+    ({
+      String label,
+      List<({String name, String meta, AiModelInfo? model, MeshSeat? seat})>
+      files,
+      int index,
+    })
+  >
+  _collections(List<AiModelInfo> all, List<MeshSeat> seats) {
+    ({String name, String meta, AiModelInfo? model, MeshSeat? seat}) modelFile(
+      AiModelInfo m,
+    ) => (
+      name: m.name,
+      meta: '${m.sizeGb} GB · ${_quantOf(m.filename)}',
+      model: m,
+      seat: null,
+    );
+    ({String name, String meta, AiModelInfo? model, MeshSeat? seat}) seatFile(
+      MeshSeat s,
+    ) => (name: s.model, meta: '${s.lane} · Mesh', model: null, seat: s);
+    final orderedSeats = MeshService.pickerOrder(seats);
+    final out =
+        <
+          ({
+            String label,
+            List<
+              ({String name, String meta, AiModelInfo? model, MeshSeat? seat})
+            >
+            files,
+            int index,
+          })
+        >[
+          (
+            label: 'All Models',
+            files: [
+              for (final m in all) modelFile(m),
+              for (final s in orderedSeats) seatFile(s),
+            ],
+            index: 0,
+          ),
+        ];
     var i = 1;
     for (final t in ModelClassifier.tagOrder) {
-      final models = all.where((m) => m.tags.contains(t)).toList();
-      if (models.isEmpty) continue;
+      final files = [
+        for (final m in all)
+          if (m.tags.contains(t)) modelFile(m),
+        for (final s in orderedSeats)
+          if (ModelClassifier.classifyRemoteTags(s.model).contains(t))
+            seatFile(s),
+      ];
+      if (files.isEmpty) continue;
       out.add((
         label: '${t[0].toUpperCase()}${t.substring(1)}',
-        models: models,
+        files: files,
         index: i++,
       ));
     }
@@ -979,6 +1099,8 @@ class _ModelLibraryBodyState extends State<_ModelLibraryBody> {
     if (!sawWakebox) {
       widgets.add(_wakeboxAsleepRow(context, ctrl));
     }
+    // Ticket 34: one card per provider; the fleet itself lives
+    // in the fleet sheet, not unrolled down this page.
     const groupOrder = ['paid', 'trial', 'free', 'local', 'compute'];
     final byGroup = <String, List<MeshSeat>>{};
     for (final s in _meshSeats) {
@@ -1001,96 +1123,256 @@ class _ModelLibraryBodyState extends State<_ModelLibraryBody> {
           ),
         ),
       );
-      for (final s in MeshService.pickerOrder(seats)) {
+      final lanes = <String>[];
+      for (final s in seats) {
+        if (!lanes.contains(s.lane)) lanes.add(s.lane);
+      }
+      lanes.sort();
+      for (final lane in lanes) {
+        final laneSeats = seats.where((s) => s.lane == lane).toList();
+        final starred = laneSeats.where((s) => s.favorite).length;
         widgets.add(
           _remoteRow(
             context,
             ctrl,
-            source: {
-              'kind': 'mesh',
-              'id': 'mesh:${s.lane}:${s.model}',
-              'label': s.model,
-              'model': s.model,
-            },
-            // UI audit 2026-11-06 (Claude P2-9, Codex P2-17): the
-            // seat options were long-press only; a visible button
-            // opens the same sheet.
-            trailing: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                _star(context, s.model, s.favorite),
-                IconButton(
-                  tooltip: 'Seat options',
-                  icon: Icon(AppIcons.more, size: 20, color: context.textM),
-                  onPressed: () => _seatVerifySheet(context, s),
-                ),
-              ],
-            ),
-            title: s.model,
-            sub: s.dead
-                ? '${s.lane} · Not working, tap to retry'
-                : s.isBlocked && s.blocked != null
-                ? '${s.lane} · ${s.blocked}'
-                : s.lane,
-            badge: s.dead
-                ? 'NOT WORKING'
-                : s.isBlocked
-                ? 'BLOCKED'
-                : s.isVerified
-                ? (s.proven ? 'PROVEN' : 'VERIFIED')
-                : 'UNTESTED',
-            badgeColor: s.dead || s.isBlocked
-                ? AppColors.red
-                : s.isVerified
-                ? AppColors.green
-                : AppColors.orange,
+            source: {'kind': 'provider', 'id': 'provider:$lane'},
+            title: lane,
+            sub:
+                '${laneSeats.length} seats${starred > 0 ? ' · $starred starred' : ''}',
+            badge: g.toUpperCase(),
+            badgeColor: AppColors.accent,
             icon: Icons.hub_outlined,
-            dimmed: s.isBlocked || s.dead,
-            tapOverride: s.dead
-                ? () async {
-                    // Retrying a dead seat: the tag clears and the
-                    // seat answers in chat — Kai's smoke test decides
-                    // if it earns its place back.
-                    TapFx.select();
-                    await _meshSvc.setModelDead(s.model, false);
-                    ctrl.selectRemote({
-                      'kind': 'mesh',
-                      'id': 'mesh:${s.lane}:${s.model}',
-                      'label': s.model,
-                      'model': s.model,
-                    });
-                    if (!context.mounted) return;
-                    setState(() => _meshSeats = _meshSvc.cachedSeats());
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(
-                        backgroundColor: context.bgPanel,
-                        content: Text(
-                          'Retrying ${s.model}. Not-working mark cleared',
-                          style: TextStyle(color: context.text),
-                        ),
-                      ),
-                    );
-                  }
-                : s.isBlocked
-                ? () {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(
-                        backgroundColor: context.bgPanel,
-                        content: Text(
-                          s.blocked ?? 'Unavailable on this gateway',
-                          style: TextStyle(color: context.text),
-                        ),
-                      ),
-                    );
-                  }
-                : null,
-            onLongPress: () => _seatVerifySheet(context, s),
+            trailing: Icon(
+              Icons.chevron_right,
+              size: 20,
+              color: context.textD,
+            ),
+            tapOverride: () => _fleetSheet(context, ctrl, lane),
           ),
         );
       }
     }
     widgets.add(const SizedBox(height: 16));
     return widgets;
+  }
+
+  /// Ticket 34: one mesh seat's row — the exact row the Models
+  /// page used to unroll inline for every seat; it now renders
+  /// inside the provider's fleet sheet.
+  Widget _seatRow(BuildContext context, ModelController ctrl, MeshSeat s) {
+    return _remoteRow(
+      context,
+      ctrl,
+      source: {
+        'kind': 'mesh',
+        'id': 'mesh:${s.lane}:${s.model}',
+        'label': s.model,
+        'model': s.model,
+      },
+      // UI audit 2026-11-06 (Claude P2-9, Codex P2-17): the
+      // seat options were long-press only; a visible button
+      // opens the same sheet.
+      trailing: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          _star(context, s.model, s.favorite),
+          IconButton(
+            tooltip: 'Seat options',
+            icon: Icon(AppIcons.more, size: 20, color: context.textM),
+            onPressed: () => _seatVerifySheet(context, s),
+          ),
+        ],
+      ),
+      title: s.model,
+      sub: s.dead
+          ? '${s.lane} · Not working, tap to retry'
+          : s.isBlocked && s.blocked != null
+          ? '${s.lane} · ${s.blocked}'
+          : s.lane,
+      badge: s.dead
+          ? 'NOT WORKING'
+          : s.isBlocked
+          ? 'BLOCKED'
+          : s.isVerified
+          ? (s.proven ? 'PROVEN' : 'VERIFIED')
+          : 'UNTESTED',
+      badgeColor: s.dead || s.isBlocked
+          ? AppColors.red
+          : s.isVerified
+          ? AppColors.green
+          : AppColors.orange,
+      icon: Icons.hub_outlined,
+      dimmed: s.isBlocked || s.dead,
+      tapOverride: s.dead
+          ? () async {
+              // Retrying a dead seat: the tag clears and the
+              // seat answers in chat — Kai's smoke test decides
+              // if it earns its place back.
+              TapFx.select();
+              await _meshSvc.setModelDead(s.model, false);
+              ctrl.selectRemote({
+                'kind': 'mesh',
+                'id': 'mesh:${s.lane}:${s.model}',
+                'label': s.model,
+                'model': s.model,
+              });
+              if (!context.mounted) return;
+              setState(() => _meshSeats = _meshSvc.cachedSeats());
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  backgroundColor: context.bgPanel,
+                  content: Text(
+                    'Retrying ${s.model}. Not-working mark cleared',
+                    style: TextStyle(color: context.text),
+                  ),
+                ),
+              );
+            }
+          : s.isBlocked
+          ? () {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  backgroundColor: context.bgPanel,
+                  content: Text(
+                    s.blocked ?? 'Unavailable on this gateway',
+                    style: TextStyle(color: context.text),
+                  ),
+                ),
+              );
+            }
+          : null,
+      onLongPress: () => _seatVerifySheet(context, s),
+    );
+  }
+
+  /// Ticket 34: one provider's whole fleet in a sheet of its
+  /// own — search at the top, favorites first (pickerOrder), the
+  /// same seat rows the page used to unroll inline. Row actions
+  /// refresh the gateway cache through the existing handlers;
+  /// the sheet re-reads the cache on every rebuild, and a
+  /// pointer-up schedules one rebuild so stars and selection
+  /// highlights land without a reopen.
+  void _fleetSheet(
+    BuildContext context,
+    ModelController ctrl,
+    String lane, {
+    String? initialQuery,
+  }) {
+    final searchCtrl = TextEditingController(text: initialQuery ?? '');
+    var query = (initialQuery ?? '').trim().toLowerCase();
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: context.bgPanel,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(18)),
+      ),
+      builder: (sheetCtx) => StatefulBuilder(
+        builder: (sheetCtx, setSheet) {
+          final seats = MeshService.pickerOrder(
+            _meshSvc
+                .cachedSeats()
+                .where(
+                  (s) =>
+                      s.lane == lane &&
+                      (query.isEmpty || s.model.toLowerCase().contains(query)),
+                )
+                .toList(),
+          );
+          return SafeArea(
+            child: SizedBox(
+              height: MediaQuery.of(sheetCtx).size.height * 0.92,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(20, 18, 20, 0),
+                    child: Text(
+                      lane,
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w600,
+                        color: sheetCtx.text,
+                      ),
+                    ),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(20, 4, 20, 0),
+                    child: Text(
+                      '${seats.length} seats via your PC mesh',
+                      style: TextStyle(fontSize: 12, color: sheetCtx.textM),
+                    ),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+                    child: TextField(
+                      controller: searchCtrl,
+                      onChanged: (v) =>
+                          setSheet(() => query = v.trim().toLowerCase()),
+                      style: TextStyle(color: sheetCtx.text, fontSize: 14),
+                      decoration: InputDecoration(
+                        hintText: 'Search this fleet',
+                        hintStyle: TextStyle(color: sheetCtx.textD),
+                        prefixIcon: Icon(
+                          Icons.search,
+                          size: 18,
+                          color: sheetCtx.textD,
+                        ),
+                        filled: true,
+                        fillColor: sheetCtx.bgInput,
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: BorderSide(color: sheetCtx.border),
+                        ),
+                        enabledBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(12),
+                          borderSide: BorderSide(color: sheetCtx.border),
+                        ),
+                      ),
+                    ),
+                  ),
+                  Expanded(
+                    child: Listener(
+                      onPointerUp: (_) => Future.delayed(
+                        const Duration(milliseconds: 350),
+                        () {
+                          if (sheetCtx.mounted) setSheet(() {});
+                        },
+                      ),
+                      child: ListView(
+                        padding: const EdgeInsets.fromLTRB(16, 4, 16, 20),
+                        children: [
+                          for (final s in seats) _seatRow(sheetCtx, ctrl, s),
+                          if (seats.isEmpty)
+                            Padding(
+                              padding: const EdgeInsets.only(top: 24),
+                              child: Text(
+                                'No seats match.',
+                                style: TextStyle(
+                                  color: sheetCtx.textD,
+                                  fontSize: 13,
+                                ),
+                              ),
+                            ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          );
+        },
+      ),
+    ).then((_) {
+      searchCtrl.dispose();
+      if (mounted) {
+        setState(() {
+          _meshSeats = _meshSvc.cachedSeats();
+          _nodeModels = _meshSvc.cachedNodeModels();
+        });
+      }
+    });
   }
 
   /// Mesh 0.17: Kai smoke-tests unverified seats by picking them;

@@ -279,6 +279,65 @@ class ModelClassifier {
     'moe',
   ];
 
+  /// Ticket 34: capability tags for a REMOTE (mesh seat) model,
+  /// derived from its model id alone — there is no GGUF header to
+  /// read on a gateway seat. Heuristic by design: the id's own
+  /// markers (coder, -vl, -r1, abliterated...) file the seat into
+  /// the same Collections folders the local catalog uses, and a
+  /// seat with no capability marker files as a chat model (or a
+  /// base model when the id says so). Ordered like every other
+  /// tag list in this class.
+  static List<String> classifyRemoteTags(String modelId) {
+    final hay = modelId.toLowerCase();
+    bool has(List<String> needles) => needles.any(hay.contains);
+    final tags = <String>{};
+    if (has(['uncensored', 'abliterat', 'heretic', 'dolphin', 'nsfw'])) {
+      tags.add('uncensored');
+    }
+    if (has([
+      'coder',
+      'codellama',
+      'starcoder',
+      'devstral',
+      'code-',
+      '-code',
+      'deepseek-coder',
+    ])) {
+      tags.add('code');
+    }
+    if (has([
+      '-vl',
+      'vision',
+      'llava',
+      'pixtral',
+      'qvq',
+      'moondream',
+      'minicpm-v',
+      'internvl',
+    ])) {
+      tags.add('vision');
+    }
+    if (has([
+      'deepseek-r',
+      '-r1',
+      'reason',
+      'think',
+      'qwq',
+      'magistral',
+    ])) {
+      tags.add('reasoning');
+    }
+    if (has(['mixtral', '-a3b', '-a4b', 'a17b', 'a22b', 'moe'])) {
+      tags.add('moe');
+    }
+    if (has(['-base', 'base-', '_base'])) {
+      tags.add('base');
+    } else {
+      tags.add('chat');
+    }
+    return tagOrder.where(tags.contains).toList();
+  }
+
   /// Capability tags from the header + filename markers.
   static List<String> classifyTags({
     GgufHeader? header,

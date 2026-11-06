@@ -39,7 +39,9 @@ class ModelPinsService {
       return list.map((raw) {
         final m = Map<String, dynamic>.from(raw as Map);
         final sizeBytes = (m['sizeBytes'] as num?)?.toInt() ?? 0;
-        final sizeGb = sizeBytes / 1000000000.0;
+        // Ticket 34 wart fix: catalog models carry 2dp sizes; the
+        // raw quotient rendered as "1.929903264 GB" on pinned cards.
+        final sizeGb = ((sizeBytes / 1000000000.0) * 100).round() / 100;
         // House estimate (same formula as custom-model intake):
         // size * 1.2, rounded up to an even GB, floor 4.
         var minRam = ((sizeGb * 1.2) / 2).ceil() * 2;
