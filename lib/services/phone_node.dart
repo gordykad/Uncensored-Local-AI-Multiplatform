@@ -13,10 +13,17 @@ import 'mesh_service.dart';
 Future<Map<String, dynamic>> phoneNodePayload() async {
   final api = Get.find<LocalApiServerService>();
   final ctrl = Get.find<ModelController>();
-  final ip = await MeshService.advertisedIp();
+  final url = await MeshService.advertisedUrl(api.port.value);
   return {
     'name': MeshService.phoneNodeName,
-    'url': ip == null ? '' : 'http://$ip:${api.port.value}',
+    'url': url ?? '',
+    // Ticket 38 contract (mesh 0.30): the gateway stores this
+    // MEMORY-ONLY against the node name and sends it back as
+    // x-admin-token on every gateway-to-phone call, now that the
+    // LLM routes require the token off-loopback. Sent on every
+    // join/heartbeat, so a token regeneration propagates within
+    // one heartbeat.
+    'api_token': api.adminToken,
     'kind': 'phone',
     'via_tunnel_proxy': true,
     'gpu': 'Apple GPU',

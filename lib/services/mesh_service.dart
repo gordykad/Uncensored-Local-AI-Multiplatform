@@ -407,6 +407,7 @@ class MeshService {
   /// the gateway sees the true source address; the phone's own
   /// interface guess is only the fallback).
   static String? _echoedIp;
+  static String? _echoedUrl;
 
   /// Response keys the gateway's join echo may arrive under, in
   /// preference order. Confirmed against the mesh chat's contract
@@ -423,6 +424,15 @@ class MeshService {
   /// The address to advertise: the gateway's echo when we have one,
   /// otherwise the interface heuristic.
   static Future<String?> advertisedIp() async => _echoedIp ?? tailnetIp();
+
+  /// The full URL to advertise: the gateway's echoed URL wins
+  /// (mesh 0.30 contract: observed_url), then the echoed IP, then
+  /// the heuristic address.
+  static Future<String?> advertisedUrl(int port) async {
+    if (_echoedUrl != null) return _echoedUrl;
+    final ip = await advertisedIp();
+    return ip == null ? null : 'http://$ip:$port';
+  }
 
   static Future<String?> tailnetIp() async {
     try {
@@ -476,6 +486,11 @@ class MeshService {
                 _echoedIp = v;
                 break;
               }
+            }
+            final echoedUrl = body['observed_url'];
+            if (echoedUrl is String) {
+              final host = Uri.tryParse(echoedUrl)?.host ?? '';
+              if (_isTailnetV4(host)) _echoedUrl = echoedUrl;
             }
           }
         } catch (_) {}

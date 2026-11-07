@@ -173,6 +173,51 @@ class LocalApiServerService extends GetxService {
         return;
       }
 
+      // Ticket 38: the LLM surface is token-gated for off-loopback
+      // callers. Loopback (the app itself, on-device tools) stays
+      // open. The mesh gateway sends x-admin-token on its calls
+      // because the join payload carries api_token (mesh 0.30
+      // contract). Blocked attempts are narrated, never silent.
+      final isLlmRoute =
+          (path == '/v1/chat/completions' || path == '/api/chat') ||
+              (request.method == 'GET' &&
+                  (path == '/v1/models' || path == '/api/tags'));
+      final remote =
+          !(request.connectionInfo?.remoteAddress.isLoopback ?? false);
+      if (isLlmRoute && remote && !_adminAuthorized(request)) {
+        _noteAdmin(request, 'Blocked an API call with no token');
+        await _writeError(
+          request.response,
+          HttpStatus.unauthorized,
+          'This endpoint requires the admin token for remote callers.',
+          type: 'authentication_error',
+          code: 'missing_admin_token',
+        );
+        return;
+      }
+      if (isLlmRoute && remote && request.method == 'POST') {
+        try {
+          Get.find<LogService>().info(
+            'Remote API chat from ${request.connectionInfo?.remoteAddress.address}',
+            source: 'API',
+          );
+        } catch (_) {}
+      }
+      // Ticket 38: body cap on the POST chat routes (the streaming
+      // reader enforces the same cap for chunked bodies).
+      if (request.method == 'POST' &&
+          (path == '/v1/chat/completions' || path == '/api/chat') &&
+          request.contentLength > 1024 * 1024) {
+        await _writeError(
+          request.response,
+          HttpStatus.requestEntityTooLarge,
+          'Request body too large.',
+          type: 'invalid_request_error',
+          code: 'body_too_large',
+        );
+        return;
+      }
+
       if (request.method == 'GET' && path == '/v1/models') {
         await _writeJson(request.response, _modelsJson());
         return;
@@ -747,6 +792,11 @@ class LocalApiServerService extends GetxService {
   Future<Map<String, dynamic>> _readJsonObject(HttpRequest request) async {
     try {
       final raw = await utf8.decoder.bind(request).join();
+      // Ticket 38: cap chunked bodies too (Content-Length gate in
+      // the router only sees declared lengths).
+      if (raw.length > 1024 * 1024) {
+        throw _OpenAiRequestException('Request body too large.');
+      }
       final decoded = jsonDecode(raw);
       if (decoded is Map<String, dynamic>) return decoded;
       if (decoded is Map) return Map<String, dynamic>.from(decoded);
