@@ -299,10 +299,13 @@ class ModelController extends GetxController {
         await Get.find<LogService>().clearLogFiles();
       } catch (_) {}
       try {
-        final keep = Get.find<ImageGenService>()
-            .history()
-            .map((r) => r.file)
-            .toSet();
+        // Constructed directly, NOT Get.find: nothing registers
+        // ImageGenService with GetX (the screen builds its own),
+        // so the lookup threw, the catch swallowed it, and this
+        // sweep silently never ran (Claude verification,
+        // 2026-11-06).
+        final keep =
+            ImageGenService().history().map((r) => r.file).toSet();
         final dir = await getApplicationDocumentsDirectory();
         final images = Directory('${dir.path}/images');
         if (await images.exists()) {

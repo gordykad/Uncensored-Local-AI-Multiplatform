@@ -129,7 +129,11 @@ class LocalApiServerService extends GetxService {
     allInterfaces.value = value;
     _storage.localApiAllInterfaces = value;
     if (isRunning.value) {
-      // Restart with new binding
+      // Restart with the new binding. A bare start() is a NO-OP
+      // here — it early-returns when the port is unchanged, which
+      // left the old binding live while the UI showed the switch
+      // flipped (Claude verification, 2026-11-06). Stop first.
+      await stop(persist: false);
       await start();
     }
   }
@@ -393,7 +397,11 @@ class LocalApiServerService extends GetxService {
         buf.write(t);
         sink.add(t);
       }
-      await sink.close();
+      // Never awaited: if runRemoteTurn returned early without
+      // listening, close() can hang this HTTP response forever
+      // (Claude verification, 2026-11-06). The UI mirror is
+      // best-effort; the caller's response is not.
+      unawaited(sink.close());
       await _writeJson(resp, {
         'model': modelName,
         'created_at': DateTime.now().toUtc().toIso8601String(),
@@ -418,7 +426,7 @@ class LocalApiServerService extends GetxService {
       );
       await resp.flush();
     }
-    await sink.close();
+    unawaited(sink.close());
     resp.write(
       '${jsonEncode({
         'model': modelName,

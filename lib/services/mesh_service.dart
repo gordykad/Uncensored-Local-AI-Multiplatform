@@ -415,10 +415,19 @@ class MeshService {
   static const _echoKeys = ['observed_ip', 'echo_ip', 'advertised_ip'];
 
   static bool _isTailnetV4(String ip) {
+    // Strict: four decimal octets, nothing else. The loose version
+    // accepted '100.64.abc.def' and '100.64.1.1/x' — it only ever
+    // parsed the second octet (Claude verification, 2026-11-06).
     final parts = ip.split('.');
-    if (parts.length != 4 || parts[0] != '100') return false;
-    final second = int.tryParse(parts[1]) ?? 0;
-    return second >= 64 && second <= 127;
+    if (parts.length != 4) return false;
+    final nums = <int>[];
+    for (final p in parts) {
+      if (!RegExp(r'^\d{1,3}$').hasMatch(p)) return false;
+      final n = int.parse(p);
+      if (n > 255) return false;
+      nums.add(n);
+    }
+    return nums[0] == 100 && nums[1] >= 64 && nums[1] <= 127;
   }
 
   /// The address to advertise: the gateway's echo when we have one,
@@ -521,6 +530,11 @@ class MeshService {
     _heartbeat?.cancel();
     _heartbeat = null;
     _presencePayload = null;
+    // A stale echo must not outlive the presence it came from —
+    // the next join re-derives the address fresh (Claude
+    // verification, 2026-11-06).
+    _echoedIp = null;
+    _echoedUrl = null;
     await _settings.put('mesh_phone_node', false);
     if (leave && connectivityOn) {
       try {

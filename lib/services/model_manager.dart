@@ -375,6 +375,14 @@ class ModelManager extends GetxService {
       // file and get renamed to .gguf.
       final expectStatus = existingBytes > 0 ? 206 : 200;
       if (response.statusCode != expectStatus) {
+        // A failed status deletes the .part: left behind, a stale
+        // full-size .part wedges every retry (resume draws a 416,
+        // this gate throws, the same .part greets the next attempt
+        // — Claude verification, 2026-11-06). Losing a dead
+        // transfer's partial beats a permanently stuck model.
+        try {
+          await partFile.delete();
+        } catch (_) {}
         throw Exception(
             'Download failed: HTTP ${response.statusCode} from ${model.url}');
       }
