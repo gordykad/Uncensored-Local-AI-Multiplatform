@@ -1,6 +1,7 @@
 import Darwin
 import Flutter
 import Metal
+import Photos
 import UIKit
 import UserNotifications
 
@@ -97,6 +98,60 @@ import UserNotifications
           result(true)
         default:
           result(FlutterMethodNotImplemented)
+        }
+      }
+    }
+
+    // Media channel (1.20.9): Save-to-Photos for the gallery viewer.
+    // Add-only Photos authorization (NSPhotoLibraryAddUsageDescription
+    // is already in Info.plist); the file stays in app storage either
+    // way, this only writes a copy into the user's photo library.
+    if let registrar = engineBridge.pluginRegistry.registrar(forPlugin: "MiniXMedia") {
+      let channel = FlutterMethodChannel(
+        name: "minix/media",
+        binaryMessenger: registrar.messenger()
+      )
+      channel.setMethodCallHandler { call, result in
+        switch call.method {
+        case "saveToPhotos":
+          let args = call.arguments as? [String: Any] ?? [:]
+          guard let path = args["path"] as? String else {
+            result(FlutterError(code: "bad_args", message: "saveToPhotos needs path", details: nil))
+            return
+          }
+          MiniXMedia.save(path: path, isVideo: args["isVideo"] as? Bool ?? false, result: result)
+        default:
+          result(FlutterMethodNotImplemented)
+        }
+      }
+    }
+  }
+}
+
+// ── Media save (1.20.9) ────────────────────────────────────────
+enum MiniXMedia {
+  static func save(path: String, isVideo: Bool, result: @escaping FlutterResult) {
+    let url = URL(fileURLWithPath: path)
+    PHPhotoLibrary.requestAuthorization(for: .addOnly) { status in
+      guard status == .authorized || status == .limited else {
+        DispatchQueue.main.async {
+          result(FlutterError(code: "denied", message: "Photo library access is not granted", details: nil))
+        }
+        return
+      }
+      PHPhotoLibrary.shared().performChanges({
+        if isVideo {
+          PHAssetChangeRequest.creationRequestForAssetFromVideo(atFileURL: url)
+        } else {
+          PHAssetChangeRequest.creationRequestForAssetFromImage(atFileURL: url)
+        }
+      }) { ok, error in
+        DispatchQueue.main.async {
+          if ok {
+            result(true)
+          } else {
+            result(FlutterError(code: "save_failed", message: error?.localizedDescription, details: nil))
+          }
         }
       }
     }

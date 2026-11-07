@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:get/get.dart';
+import 'package:intl/intl.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
@@ -19,9 +20,7 @@ class LogEntry {
   });
 
   String get formatted {
-    final t = '${timestamp.hour.toString().padLeft(2, '0')}:'
-        '${timestamp.minute.toString().padLeft(2, '0')}:'
-        '${timestamp.second.toString().padLeft(2, '0')}';
+    final t = DateFormat('HH:mm:ss').format(timestamp);
     final src = source != null ? ' ($source)' : '';
     return '[$t] [$level]$src $message';
   }

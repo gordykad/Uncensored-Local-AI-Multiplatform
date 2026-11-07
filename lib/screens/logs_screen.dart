@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:get/get.dart';
+import 'package:intl/intl.dart';
 
 import '../theme/app_colors.dart';
 import '../services/llm_service.dart';
@@ -264,10 +265,7 @@ class _LogTile extends StatelessWidget {
         levelIcon = Icons.info_outline_rounded;
     }
 
-    final time =
-        '${entry.timestamp.hour.toString().padLeft(2, '0')}:'
-        '${entry.timestamp.minute.toString().padLeft(2, '0')}:'
-        '${entry.timestamp.second.toString().padLeft(2, '0')}';
+    final time = DateFormat('HH:mm:ss').format(entry.timestamp);
 
     return Container(
       margin: const EdgeInsets.only(bottom: 4),

@@ -23,6 +23,7 @@ abstract final class AppIcons {
   static const IconData download = LucideIcons.download;
   static const IconData trash = LucideIcons.trash2;
   static const IconData copy = LucideIcons.copy;
+  static const IconData share = LucideIcons.share2;
   static const IconData regenerate = LucideIcons.refreshCw;
   static const IconData close = LucideIcons.x;
   static const IconData add = LucideIcons.plus;

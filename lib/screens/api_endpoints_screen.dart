@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
+import 'package:intl/intl.dart';
 import 'package:http/http.dart' as http;
 import '../theme/app_colors.dart';
 import '../theme/app_icons.dart';
@@ -346,10 +347,7 @@ class _RemoteActivityCard extends StatelessWidget {
             agoText = '${d.inHours}h ago';
           }
         }
-        String clock(DateTime t) =>
-            '${t.hour.toString().padLeft(2, '0')}:'
-            '${t.minute.toString().padLeft(2, '0')}:'
-            '${t.second.toString().padLeft(2, '0')}';
+        String clock(DateTime t) => DateFormat('HH:mm:ss').format(t);
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [

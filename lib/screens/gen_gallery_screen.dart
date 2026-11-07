@@ -8,10 +8,14 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
+import 'package:intl/intl.dart';
+import 'package:share_plus/share_plus.dart';
 import 'package:video_player/video_player.dart';
 
 import '../services/image_gen_service.dart';
+import '../services/media_save_service.dart';
 import '../theme/app_colors.dart';
+import '../theme/app_icons.dart';
 import '../widgets/tab_header.dart';
 
 class GenGalleryScreen extends StatefulWidget {
@@ -243,11 +247,22 @@ class _GenViewer extends StatelessWidget {
   final ImageGenService svc;
   const _GenViewer({required this.rec, required this.svc});
 
-  String _when(int ts) {
-    final d = DateTime.fromMillisecondsSinceEpoch(ts);
-    final mm = d.minute.toString().padLeft(2, '0');
-    final hh = d.hour.toString().padLeft(2, '0');
-    return '${d.month}/${d.day}/${d.year}  $hh:$mm';
+  String _when(int ts) => DateFormat('M/d/yyyy  HH:mm')
+      .format(DateTime.fromMillisecondsSinceEpoch(ts));
+
+  Future<void> _share() async {
+    await SharePlus.instance
+        .share(ShareParams(files: [XFile(rec.file)]));
+  }
+
+  Future<void> _save() async {
+    final err =
+        await MediaSaveService.saveToPhotos(rec.file, isVideo: rec.isVideo);
+    Get.snackbar('Previous Gens', err ?? 'Saved to Photos.',
+        snackPosition: SnackPosition.BOTTOM,
+        backgroundColor: AppColors.darkBgPanel,
+        colorText: AppColors.darkText,
+        duration: const Duration(seconds: 2));
   }
 
   @override
@@ -339,6 +354,38 @@ class _GenViewer extends StatelessWidget {
                         '${rec.seed != null ? '  -  seed ${rec.seed}' : ''}',
                         style: const TextStyle(
                             color: AppColors.darkTextD, fontSize: 12),
+                      ),
+                      const SizedBox(height: 16),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: OutlinedButton.icon(
+                              onPressed: _share,
+                              icon: const Icon(AppIcons.share, size: 16),
+                              label: const Text('Share'),
+                              style: OutlinedButton.styleFrom(
+                                foregroundColor: AppColors.darkText,
+                                side: const BorderSide(
+                                    color: AppColors.darkBorder),
+                                textStyle: const TextStyle(fontSize: 13.5),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: OutlinedButton.icon(
+                              onPressed: _save,
+                              icon: const Icon(AppIcons.download, size: 16),
+                              label: const Text('Save to Photos'),
+                              style: OutlinedButton.styleFrom(
+                                foregroundColor: AppColors.darkText,
+                                side: const BorderSide(
+                                    color: AppColors.darkBorder),
+                                textStyle: const TextStyle(fontSize: 13.5),
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
                     ]),
               ),
