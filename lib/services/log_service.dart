@@ -42,6 +42,35 @@ class LogService extends GetxService {
   File? _logFile;
   Future<void> _writeChain = Future.value();
 
+  // Ticket 42: the file used to grow without bound. Cap it: at
+  // 512 KB it rotates to engine.log.1 (one generation kept) and
+  // starts fresh — checked at open and every 256 appends.
+  static const int _logCapBytes = 512 * 1024;
+  int _appendsSinceCheck = 0;
+
+  Future<void> _rotateIfOversized(File f) async {
+    try {
+      if (await f.length() <= _logCapBytes) return;
+      final old = File('${f.path}.1');
+      if (await old.exists()) await old.delete();
+      await f.rename(old.path);
+      await f.create(recursive: true);
+    } catch (_) {}
+  }
+
+  /// Delete the on-disk logs (Settings cache clear, ticket 42).
+  Future<void> clearLogFiles() async {
+    await _writeChain;
+    try {
+      final dir = await getApplicationDocumentsDirectory();
+      for (final name in ['engine.log', 'engine.log.1']) {
+        final f = File(p.join(dir.path, name));
+        if (await f.exists()) await f.delete();
+      }
+      _logFile = null;
+    } catch (_) {}
+  }
+
   LogService init() {
     info('App started', source: 'System');
     return this;
@@ -54,6 +83,8 @@ class LogService extends GetxService {
       _logFile = File(p.join(dir.path, 'engine.log'));
       if (!await _logFile!.exists()) {
         await _logFile!.create(recursive: true);
+      } else {
+        await _rotateIfOversized(_logFile!);
       }
     } catch (_) {
       _logFile = null;
@@ -66,6 +97,10 @@ class LogService extends GetxService {
       final f = _logFile;
       if (f == null) return;
       try {
+        if (++_appendsSinceCheck >= 256) {
+          _appendsSinceCheck = 0;
+          await _rotateIfOversized(f);
+        }
         await f.writeAsString(
           '${entry.timestamp.toIso8601String()} ${entry.formatted}\n',
           mode: FileMode.append,

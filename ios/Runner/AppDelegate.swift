@@ -568,10 +568,40 @@ final class MiniXDownloads: NSObject, URLSessionDownloadDelegate, UNUserNotifica
       postFailureNotification(name: name, error: failure)
       MiniXLiveActivity.shared.finished(filename: fname, ok: false)
     } else {
+      // Ticket 37: integrity gate — a finished transfer is not
+      // automatically a model (error pages and truncated bodies
+      // finish too). Non-empty, the task's own received count must
+      // match what the server declared, and .gguf payloads must
+      // carry the GGUF magic header. Failure deletes the file and
+      // reports failed through the usual status path.
       let size = (try? FileManager.default.attributesOfItem(atPath: dest.path)[.size] as? NSNumber)?.intValue ?? 0
-      setStatus(fname, ["status": "completed", "received": size, "total": size])
-      postCompletionNotification(name: name)
-      MiniXLiveActivity.shared.finished(filename: fname, ok: true)
+      var integrityError: String?
+      if size <= 0 {
+        integrityError = "Downloaded file is empty"
+      } else if downloadTask.countOfBytesExpectedToReceive > 0
+                  && downloadTask.countOfBytesReceived != downloadTask.countOfBytesExpectedToReceive {
+        integrityError = "Download incomplete: \(downloadTask.countOfBytesReceived) of \(downloadTask.countOfBytesExpectedToReceive) bytes"
+      } else if fname.hasSuffix(".gguf") {
+        if let fh = try? FileHandle(forReadingFrom: dest) {
+          let head = fh.readData(ofLength: 4)
+          try? fh.close()
+          if head != Data([0x47, 0x47, 0x55, 0x46]) {
+            integrityError = "Download is not a GGUF file (bad header)"
+          }
+        } else {
+          integrityError = "Download could not be read back"
+        }
+      }
+      if let integrityError = integrityError {
+        try? FileManager.default.removeItem(at: dest)
+        setStatus(fname, ["status": "failed", "received": 0, "total": 0, "error": integrityError])
+        postFailureNotification(name: name, error: integrityError)
+        MiniXLiveActivity.shared.finished(filename: fname, ok: false)
+      } else {
+        setStatus(fname, ["status": "completed", "received": size, "total": size])
+        postCompletionNotification(name: name)
+        MiniXLiveActivity.shared.finished(filename: fname, ok: true)
+      }
     }
   }
 

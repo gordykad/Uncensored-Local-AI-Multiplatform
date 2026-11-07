@@ -118,7 +118,7 @@ class _GenGalleryScreenState extends State<GenGalleryScreen> {
           label:
               '${rec.isVideo ? 'Video' : 'Image'}: ${rec.prompt}',
           child: GestureDetector(
-          onTap: () => Get.to(() => _GenViewer(rec: rec, svc: _svc)),
+          onTap: () => Get.to(() => GenViewer(rec: rec, svc: _svc)),
           child: ClipRRect(
             borderRadius: BorderRadius.circular(8),
             child: rec.isVideo
@@ -242,10 +242,12 @@ class _ClipViewState extends State<_ClipView> {
   }
 }
 
-class _GenViewer extends StatelessWidget {
+// Ticket 39: public — the Image Gen tab opens this same viewer for
+// its results, so Share / Save to Photos exist there too.
+class GenViewer extends StatelessWidget {
   final GenRecord rec;
   final ImageGenService svc;
-  const _GenViewer({required this.rec, required this.svc});
+  const GenViewer({super.key, required this.rec, required this.svc});
 
   String _when(int ts) => DateFormat('M/d/yyyy  HH:mm')
       .format(DateTime.fromMillisecondsSinceEpoch(ts));

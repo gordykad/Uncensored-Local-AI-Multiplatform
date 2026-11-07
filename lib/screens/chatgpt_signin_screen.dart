@@ -18,7 +18,10 @@ class ChatGptSignInScreen extends StatefulWidget {
 
 class _ChatGptSignInScreenState extends State<ChatGptSignInScreen> {
   late final WebViewController _ctrl;
-  late final ({String verifier, Uri url, String state}) _attempt;
+  // Ticket 36: NOT final — Retry starts a fresh PKCE attempt and
+  // reassigns this. As `late final` the reassignment threw
+  // LateInitializationError and the Retry button crashed.
+  late ({String verifier, Uri url, String state}) _attempt;
   bool _loading = true;
   String? _error;
 

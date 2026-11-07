@@ -85,10 +85,12 @@
 	<string>Uncensored Local AI lets you pick images and files from your photo library to attach to chats and import models. Everything stays on your device.</string>
 	<key>NSPhotoLibraryAddUsageDescription</key>
 	<string>Uncensored Local AI lets you save images to your photo library. Everything stays on your device.</string>
-	<key>NSCameraUsageDescription</key>
-	<string>Uncensored Local AI lets you take a photo to attach to a chat. Photos are processed on your device only.</string>
-	<key>NSMicrophoneUsageDescription</key>
-	<string>Uncensored Local AI uses the microphone only if you record audio or video to attach to a chat. Audio is processed on your device only.</string>
+	<!-- Ticket 41: NSCameraUsageDescription and
+	     NSMicrophoneUsageDescription removed — nothing in the app
+	     uses the camera or microphone (verified in code). Dead
+	     permission strings are review bait and a lie to the user. -->
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Astro MiniX connects to your own devices and servers on your local network and tailnet, for mesh models and the local API. Nothing is scanned or shared.</string>
 	<!-- Ticket 31 fix (1.10.1): the mesh on Kai's PC and his custom
 	     connections are plain-HTTP endpoints on his own networks
 	     (tailnet / LAN / his own servers). Without an ATS exception

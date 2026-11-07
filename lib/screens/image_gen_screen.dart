@@ -15,7 +15,6 @@ import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
-import 'package:path_provider/path_provider.dart';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:video_player/video_player.dart';
@@ -42,6 +41,9 @@ class _Item {
   // the gallery store) instead of in-memory bytes.
   bool isVideo = false;
   String? videoPath;
+  // Ticket 39: the gallery record for this result, once persisted —
+  // the tap target that opens the shared viewer (Share / Photos).
+  GenRecord? rec;
   _Item(this.prompt)
       : status = 'pending',
         phase = 'Starting';
@@ -251,8 +253,9 @@ class _ImageGenScreenState extends State<ImageGenScreen>
         item.seed = result.seed;
         item.status = 'done';
         // Persist to the Previous Gens gallery (Kai, 2026-11-04).
-        // Fire-and-forget: recordGeneration never throws.
-        _svc.recordGeneration(
+        // recordGeneration never throws; ticket 39 keeps the record
+        // so the result can open in the gallery viewer.
+        item.rec = await _svc.recordGeneration(
           bytes: result.bytes,
           prompt: item.prompt,
           seed: result.seed,
@@ -303,6 +306,7 @@ class _ImageGenScreenState extends State<ImageGenScreen>
         kind: 'video',
       );
       if (rec == null) throw Exception('Could not save the clip');
+      item.rec = rec;
       item.videoPath = rec.file;
       item.seed = result.seed;
       item.status = 'done';
@@ -758,7 +762,12 @@ class _ImageGenScreenState extends State<ImageGenScreen>
           )
         else if (item.isVideo && item.videoPath != null)
           Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            _VideoTile(path: item.videoPath!),
+            GestureDetector(
+              onTap: item.rec == null
+                  ? null
+                  : () => Get.to(() => GenViewer(rec: item.rec!, svc: _svc)),
+              child: _VideoTile(path: item.videoPath!),
+            ),
             const SizedBox(height: 6),
             Text(
               '832 x 480 - video${item.seed != null ? ' - seed ${item.seed}' : ''}',
@@ -768,14 +777,19 @@ class _ImageGenScreenState extends State<ImageGenScreen>
           ])
         else
           Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            ClipRRect(
-              borderRadius: BorderRadius.circular(14),
-              // Pinned 1:1 box: the image can never collapse into a
-              // strip whatever the viewport is doing (2026-11-04).
-              child: AspectRatio(
-                aspectRatio: 1,
-                child: Image.memory(Uint8List.fromList(item.bytes!),
-                    fit: BoxFit.cover, width: double.infinity),
+            GestureDetector(
+              onTap: item.rec == null
+                  ? null
+                  : () => Get.to(() => GenViewer(rec: item.rec!, svc: _svc)),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(14),
+                // Pinned 1:1 box: the image can never collapse into a
+                // strip whatever the viewport is doing (2026-11-04).
+                child: AspectRatio(
+                  aspectRatio: 1,
+                  child: Image.memory(Uint8List.fromList(item.bytes!),
+                      fit: BoxFit.cover, width: double.infinity),
+                ),
               ),
             ),
             const SizedBox(height: 6),
@@ -790,8 +804,10 @@ class _ImageGenScreenState extends State<ImageGenScreen>
               alignment: WrapAlignment.end,
               children: [
                 TextButton(
-                  onPressed: () => _save(item),
-                  child: const Text('Save',
+                  onPressed: item.rec == null
+                      ? null
+                      : () => Get.to(() => GenViewer(rec: item.rec!, svc: _svc)),
+                  child: const Text('View',
                       style: TextStyle(
                           color: AppColors.darkTextM, fontSize: 12.5)),
                 ),
@@ -815,19 +831,10 @@ class _ImageGenScreenState extends State<ImageGenScreen>
     );
   }
 
-  Future<void> _save(_Item item) async {
-    try {
-      final dir = await getApplicationDocumentsDirectory();
-      final folder = Directory('${dir.path}/images');
-      if (!await folder.exists()) await folder.create(recursive: true);
-      final f = File(
-          '${folder.path}/gen_${DateTime.now().millisecondsSinceEpoch}.png');
-      await f.writeAsBytes(item.bytes!);
-      _toast('Saved to app files');
-    } catch (e) {
-      _toast('Save failed. The image stays available in Previous Gens.');
-    }
-  }
+  // Ticket 39: the old _save wrote a second, unindexed copy of the
+  // result into the images folder — an orphan the gallery cap never
+  // evicted. It is gone; the viewer (tap the result) carries Share
+  // and Save to Photos now.
 
   Widget _pickerRow() {
     final e = _current;

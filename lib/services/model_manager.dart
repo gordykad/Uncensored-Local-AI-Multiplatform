@@ -368,8 +368,22 @@ class ModelManager extends GetxService {
       }
 
       final response = await _httpClient!.send(request);
+
+      // Ticket 37: an error page is not a model. A resume must be
+      // answered 206, a fresh download 200; anything else (403/404,
+      // an HTML interstitial) used to stream straight into the .part
+      // file and get renamed to .gguf.
+      final expectStatus = existingBytes > 0 ? 206 : 200;
+      if (response.statusCode != expectStatus) {
+        throw Exception(
+            'Download failed: HTTP ${response.statusCode} from ${model.url}');
+      }
+
       final contentLength = response.contentLength ?? 0;
       final totalBytes = (existingBytes + contentLength).toDouble();
+      // The byte count this transfer must reach, when the server
+      // declared one. The catalog's rounded sizeGb never gates.
+      final expectedTotal = contentLength > 0 ? existingBytes + contentLength : 0;
 
       // Update total from actual HTTP response
       final state = activeDownloads[model.filename]!;
@@ -421,6 +435,31 @@ class ModelManager extends GetxService {
       await sink.close();
 
       if (!state.isCancelled) {
+        // Ticket 37: integrity gate before the file may call itself
+        // a model — the full declared byte count, and the GGUF magic
+        // header. A failed gate deletes the .part (resuming garbage
+        // only preserves garbage) and fails loudly.
+        if (expectedTotal > 0 && receivedBytes != expectedTotal) {
+          try {
+            await partFile.delete();
+          } catch (_) {}
+          throw Exception(
+              'Download incomplete: $receivedBytes of $expectedTotal bytes');
+        }
+        final head = await partFile
+            .openRead(0, 4)
+            .fold<List<int>>(<int>[], (acc, chunk) => acc..addAll(chunk));
+        final magicOk = head.length == 4 &&
+            head[0] == 0x47 && // G
+            head[1] == 0x47 && // G
+            head[2] == 0x55 && // U
+            head[3] == 0x46; // F
+        if (!magicOk) {
+          try {
+            await partFile.delete();
+          } catch (_) {}
+          throw Exception('Download is not a GGUF file (bad header)');
+        }
         // Rename .part to final
         await partFile.rename(filePath);
         if (!downloadedModels.contains(model.filename)) {

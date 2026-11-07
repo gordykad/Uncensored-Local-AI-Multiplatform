@@ -402,21 +402,54 @@ class MeshService {
 
   /// The tailnet (100.64.0.0/10) IPv4 of this phone, or null when
   /// Tailscale is not up.
+  /// The tailnet address this phone should advertise, when the
+  /// gateway has echoed one back from a join (T-05 bulletproofing:
+  /// the gateway sees the true source address; the phone's own
+  /// interface guess is only the fallback).
+  static String? _echoedIp;
+
+  /// Response keys the gateway's join echo may arrive under, in
+  /// preference order. Confirmed against the mesh chat's contract
+  /// before this ships; unknown keys are ignored.
+  static const _echoKeys = ['observed_ip', 'echo_ip', 'advertised_ip'];
+
+  static bool _isTailnetV4(String ip) {
+    final parts = ip.split('.');
+    if (parts.length != 4 || parts[0] != '100') return false;
+    final second = int.tryParse(parts[1]) ?? 0;
+    return second >= 64 && second <= 127;
+  }
+
+  /// The address to advertise: the gateway's echo when we have one,
+  /// otherwise the interface heuristic.
+  static Future<String?> advertisedIp() async => _echoedIp ?? tailnetIp();
+
   static Future<String?> tailnetIp() async {
     try {
       final ifaces = await NetworkInterface.list(
         type: InternetAddressType.IPv4,
         includeLoopback: false,
       );
-      for (final iface in ifaces) {
-        for (final a in iface.addresses) {
-          final parts = a.address.split('.');
-          if (parts.length == 4 && parts[0] == '100') {
-            final second = int.tryParse(parts[1]) ?? 0;
-            if (second >= 64 && second <= 127) return a.address;
+      String? onInterface(bool Function(String name) test) {
+        for (final iface in ifaces) {
+          if (!test(iface.name)) continue;
+          for (final a in iface.addresses) {
+            if (_isTailnetV4(a.address)) return a.address;
           }
         }
+        return null;
       }
+
+      // T-05 fix: the carrier's cellular interface (pdp_ip*) also
+      // holds a CGNAT address in 100.64/10 and enumerates ahead of
+      // the Tailscale utun — the old first-match version advertised
+      // an unroutable cellular address, so the phone joined and
+      // heartbeat fine but never served a single routed request.
+      // Prefer the tunnel interface, then any non-cellular one;
+      // a cellular address is the last resort, never the default.
+      return onInterface((n) => n.startsWith('utun')) ??
+          onInterface((n) => !n.startsWith('pdp_ip')) ??
+          onInterface((_) => true);
     } catch (_) {}
     return null;
   }
@@ -430,6 +463,23 @@ class MeshService {
             body: jsonEncode(payload),
           )
           .timeout(const Duration(seconds: 10));
+      if (r.statusCode == 200) {
+        // T-05: if the gateway echoed the source address it saw,
+        // adopt it — the next heartbeat's payload advertises the
+        // echo instead of the interface guess.
+        try {
+          final body = jsonDecode(r.body);
+          if (body is Map) {
+            for (final k in _echoKeys) {
+              final v = body[k];
+              if (v is String && _isTailnetV4(v)) {
+                _echoedIp = v;
+                break;
+              }
+            }
+          }
+        } catch (_) {}
+      }
       return r.statusCode == 200;
     } catch (_) {
       return false;

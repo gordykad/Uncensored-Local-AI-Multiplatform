@@ -1,5 +1,10 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
+import 'package:intl/intl.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:share_plus/share_plus.dart';
 
 import '../theme/app_colors.dart';
 import '../theme/app_icons.dart';
@@ -812,6 +817,13 @@ class _HomeScreenState extends State<HomeScreen> {
           // during a run, so stop rides the top bar.
           _stopChip(),
 
+          // Ticket 40: export the current conversation as Markdown.
+          IconButton(
+            icon: Icon(AppIcons.share, size: 20, color: context.textM),
+            onPressed: _exportChat,
+            tooltip: 'Export Chat',
+          ),
+
           // New chat button — on the right
           IconButton(
             icon: Icon(Icons.edit_square, size: 20, color: context.textM),
@@ -821,6 +833,38 @@ class _HomeScreenState extends State<HomeScreen> {
         ],
       ),
     );
+  }
+
+  // Ticket 40: export the current conversation as a Markdown file
+  // through the share sheet.
+  Future<void> _exportChat() async {
+    final chat = _chatCtrl.activeChat;
+    if (chat == null || chat.messages.isEmpty) {
+      Get.snackbar('Export Chat', 'Nothing to export yet.',
+          snackPosition: SnackPosition.BOTTOM,
+          backgroundColor: AppColors.darkBgPanel,
+          colorText: AppColors.darkText,
+          duration: const Duration(seconds: 2));
+      return;
+    }
+    final buf = StringBuffer()
+      ..writeln('# ${chat.title.isEmpty ? 'Chat' : chat.title}')
+      ..writeln()
+      ..writeln(
+          'Exported from Astro MiniX - ${DateFormat('yyyy-MM-dd HH:mm').format(DateTime.now())}')
+      ..writeln();
+    for (final m in chat.messages.where((m) => !m.isSystem)) {
+      buf
+        ..writeln('## ${m.isUser ? 'You' : 'Assistant'}')
+        ..writeln()
+        ..writeln(m.content)
+        ..writeln();
+    }
+    final dir = await getTemporaryDirectory();
+    final f = File(
+        '${dir.path}/minix-chat-${DateTime.now().millisecondsSinceEpoch}.md');
+    await f.writeAsString(buf.toString());
+    await SharePlus.instance.share(ShareParams(files: [XFile(f.path)]));
   }
 
   void _showModelPicker(BuildContext context) {

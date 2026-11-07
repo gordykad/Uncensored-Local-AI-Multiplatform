@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
@@ -203,6 +205,49 @@ class ChatBubble extends StatelessWidget {
                 border: Border(top: BorderSide(color: context.border)),
               ),
             ),
+            // Ticket 35: remote markdown images are NEVER fetched.
+            // The default builder used Image.network, which bypassed
+            // the connectivity switch entirely, and an image URL can
+            // carry chat text out in its query string. Local files
+            // render; anything remote becomes a labeled chip.
+            sizedImageBuilder: (config) {
+              final uri = config.uri;
+              final alt = config.alt;
+              if (uri.scheme == 'file') {
+                return Image.file(File(uri.toFilePath()));
+              }
+              if (uri.scheme.isEmpty) {
+                final f = File(uri.path);
+                if (f.existsSync()) return Image.file(f);
+              }
+              if (uri.scheme == 'http' || uri.scheme == 'https') {
+                return Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: AppColors.darkBgPanel,
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: AppColors.darkBorderFaint),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(AppIcons.imageGen,
+                          size: 14, color: AppColors.darkTextD),
+                      const SizedBox(width: 6),
+                      Text(
+                        (alt != null && alt.isNotEmpty)
+                            ? alt
+                            : 'Remote image blocked',
+                        style: const TextStyle(
+                            color: AppColors.darkTextD, fontSize: 12),
+                      ),
+                    ],
+                  ),
+                );
+              }
+              return const SizedBox.shrink();
+            },
           ),
         ),
 

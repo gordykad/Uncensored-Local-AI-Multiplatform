@@ -13,7 +13,7 @@ import 'mesh_service.dart';
 Future<Map<String, dynamic>> phoneNodePayload() async {
   final api = Get.find<LocalApiServerService>();
   final ctrl = Get.find<ModelController>();
-  final ip = await MeshService.tailnetIp();
+  final ip = await MeshService.advertisedIp();
   return {
     'name': MeshService.phoneNodeName,
     'url': ip == null ? '' : 'http://$ip:${api.port.value}',
@@ -43,6 +43,6 @@ Future<bool> setPhoneNode(bool on) async {
   final api = Get.find<LocalApiServerService>();
   if (!api.allInterfaces.value) await api.setAllInterfaces(true);
   if (!api.isRunning.value) await api.start();
-  if (await MeshService.tailnetIp() == null) return false;
+  if (await MeshService.advertisedIp() == null) return false;
   return mesh.startPresence(phoneNodePayload);
 }

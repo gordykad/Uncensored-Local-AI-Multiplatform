@@ -12,6 +12,8 @@ import '../services/llm_service.dart';
 import '../services/chat_storage_service.dart';
 import '../services/log_service.dart';
 import '../services/memory_probe.dart';
+import '../services/image_gen_service.dart';
+import 'package:path_provider/path_provider.dart';
 
 class ModelController extends GetxController {
   final ModelManager _manager = Get.find<ModelManager>();
@@ -287,12 +289,35 @@ class ModelController extends GetxController {
   }
 
   /// Clear the temporary file cache used by FilePicker.
+  /// Ticket 42: also clears the on-disk logs and sweeps orphaned
+  /// generation files — images/ entries no gallery record points
+  /// at (the pre-1.20.10 Image Gen Save wrote unindexed copies).
   Future<void> clearCache() async {
     try {
       await FilePicker.platform.clearTemporaryFiles();
+      try {
+        await Get.find<LogService>().clearLogFiles();
+      } catch (_) {}
+      try {
+        final keep = Get.find<ImageGenService>()
+            .history()
+            .map((r) => r.file)
+            .toSet();
+        final dir = await getApplicationDocumentsDirectory();
+        final images = Directory('${dir.path}/images');
+        if (await images.exists()) {
+          await for (final e in images.list()) {
+            if (e is File && !keep.contains(e.path)) {
+              try {
+                await e.delete();
+              } catch (_) {}
+            }
+          }
+        }
+      } catch (_) {}
       Get.snackbar(
         'Cache Cleared',
-        'Temporary files have been removed.',
+        'Temporary files, logs, and orphaned images removed.',
         snackPosition: SnackPosition.BOTTOM,
       );
     } catch (e) {
